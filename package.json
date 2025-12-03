@@ -1,0 +1,64 @@
+{
+  "name": "monkey-agent",
+  "packageManager": "yarn@4.12.0",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "chrome-extension",
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "dev": "concurrently \"cd web && yarn dev\" \"cd server && yarn start:dev\"",
+    "build": "yarn workspaces foreach -Apt run build",
+    "build:all": "yarn build && cd web && yarn build && cd ../server && yarn build",
+    "start": "cd server && yarn start:prod",
+    "test": "yarn workspaces foreach -Ap run test",
+    "test:coverage": "yarn workspaces foreach -Ap run test -- --coverage",
+    "clean": "yarn workspaces foreach -Ap run clean",
+    "lint": "eslint packages --ext .ts,.tsx",
+    "lint:fix": "eslint packages --ext .ts,.tsx --fix",
+    "format": "prettier --write \"packages/**/*.{ts,tsx,json,md}\"",
+    "format:check": "prettier --check \"packages/**/*.{ts,tsx,json,md}\"",
+    "deps:check": "yarn audit",
+    "deps:update": "yarn upgrade-interactive",
+    "deps:dedupe": "yarn dedupe",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,md}": [
+      "prettier --write"
+    ]
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^2.0.56",
+    "@ai-sdk/google": "^2.0.46",
+    "@ai-sdk/openai": "^2.0.85",
+    "ai": "^5.0.112",
+    "eventemitter3": "^5.0.1",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^18.0.0",
+    "@commitlint/config-conventional": "^18.0.0",
+    "@eslint/js": "^9.0.0",
+    "@types/node": "^25.0.1",
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "concurrently": "^9.1.2",
+    "dotenv": "^17.2.3",
+    "eslint": "^9.0.0",
+    "husky": "^9.0.0",
+    "lint-staged": "^15.0.0",
+    "prettier": "^3.2.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^7.0.0",
+    "vite": "^5.0.8",
+    "vitest": "^1.0.4"
+  }
+}
