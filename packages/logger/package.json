@@ -1,23 +1,22 @@
 {
-  "name": "@monkey-agent/types",
+  "name": "@monkey-agent/logger",
   "version": "0.1.0",
-  "description": "Monkey Agent - TypeScript type definitions for agents, LLM, workflows and more",
+  "description": "Unified logging component with level-based filtering and context tagging",
   "author": "Monkey Agent Contributors",
   "license": "MIT",
   "keywords": [
+    "logger",
+    "logging",
     "agent",
-    "llm",
-    "ai",
-    "types",
-    "typescript"
+    "debug"
   ],
   "repository": {
     "type": "git",
     "url": "https://github.com/yourusername/monkey-agent.git",
-    "directory": "packages/types"
+    "directory": "packages/logger"
   },
   "bugs": "https://github.com/yourusername/monkey-agent/issues",
-  "homepage": "https://github.com/yourusername/monkey-agent#readme",
+  "homepage": "https://github.com/yourusername/monkey-agent/tree/main/packages/logger#readme",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -41,14 +40,12 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "zod": "^3.22.4"
+    "chalk": "^5.3.0"
   },
   "devDependencies": {
-    "@types/node": "^25.0.1",
-    "typescript": "^5.9.3",
+    "typescript": "^5.6.3",
     "vite": "^5.0.8",
-    "vite-plugin-dts": "^4.5.4",
-    "vitest": "^4.0.16"
+    "vite-plugin-dts": "^4.5.4"
   },
   "publishConfig": {
     "access": "public"

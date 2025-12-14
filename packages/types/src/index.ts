@@ -2,37 +2,94 @@
  * 核心类型定义
  */
 
-// ============ Agent 核心接口 ============
+// ============ Event Emitter ============
 
-export interface IAgent {
+export interface IEventEmitter {
+  on(event: string, handler: (...args: any[]) => void): void;
+  off(event: string, handler: (...args: any[]) => void): void;
+  emit(event: string, ...args: any[]): void;
+}
+
+// ============ Agent 核心接口（重构版）============
+
+/**
+ * Agent 信息（用于工作流生成和展示）
+ */
+export interface AgentInfo {
+  /** Agent 类型（如 'browser', 'code', 'file' 等） */
+  type: string;
+  /** Agent 描述 */
+  description: string;
+  /** Agent 能力列表 */
+  capabilities: string[];
+  /** 可选：Agent 可用的工具列表 */
+  tools?: string[];
+}
+
+/**
+ * Agent 核心接口
+ * 重构后只保留必需的方法
+ */
+export interface IAgent extends IEventEmitter {
   id: string;
   name: string;
   description: string;
   capabilities: string[];
   
-  execute(task: Task): Promise<TaskResult>;
-  plan(goal: Goal): Promise<Plan>;
-  reflect(result: TaskResult): Promise<Reflection>;
+  /**
+   * 执行任务
+   * 
+   * @param task 任务描述（可选，默认使用 agent 描述）
+   * @param context 执行上下文（可选，自动创建）
+   * @param options 执行选项
+   * 
+   * 使用场景：
+   * 1. 简单独立执行: execute('打开百度')
+   * 2. 结构化执行: execute('任务', null, { agentNode: { steps: [...] } })
+   * 3. Workflow调度: execute(task, context, { agentNode: fullNode })
+   * 
+   * @returns 执行结果
+   */
+  execute(task?: string, context?: AgentContext, options?: any): Promise<AgentExecutionResult>;
+  
+  /**
+   * 获取 Agent 的工具定义（可选）
+   * 用于 ChatAgent 生成 workflow 时提供更详细的能力描述
+   */
+  getToolDefinitions?(): Record<string, any>;
 }
 
-// ============ Task 相关 ============
-
-export interface Task {
-  id: string;
-  type: string;
-  description: string;
-  parameters: Record<string, any>;
-  context?: Context;
-  priority?: number;
-  deadline?: Date;
-}
-
-export interface TaskResult {
-  success: boolean;
-  data?: any;
+/**
+ * Agent 执行结果
+ */
+export interface AgentExecutionResult {
+  agentId: string;
+  data: any;
+  summary: string;
+  status: 'success' | 'failed';
   error?: Error;
-  metadata?: Record<string, any>;
   duration?: number;
+  iterations?: number;  // 实际执行的迭代次数
+}
+
+/**
+ * Agent 执行上下文（WorkflowOrchestrator 提供）
+ */
+export interface AgentContext {
+  workflowId: string;
+  workflowTask: string;
+  outputs: Map<string, AgentExecutionResult>;  // 其他节点的输出
+  vals: Map<string, any>;  // 共享变量
+  workflowContext?: any;   // Workflow 级别的上下文（如 tabId）
+  currentLevel: number;
+  status: 'running' | 'completed' | 'failed';
+  startTime: number;
+  
+  // 辅助方法
+  getOutput(agentId: string): AgentExecutionResult | undefined;
+  getValue(key: string): any;
+  setValue(key: string, value: any): void;
+  toJSON(): any;
 }
 
 // ============ Workflow 相关 ============
@@ -53,7 +110,15 @@ export interface AgentNodeStep {
 export interface AgentNode {
   /** Agent ID */
   id: string;
-  /** Agent 类型 */
+  /**
+   * Agent 标识符（agent ID 或 name）
+   * 用于在 WorkflowExecutor 中查找对应的 Agent 实例
+   * 
+   * 注意：虽然字段名是 'type'，但它存储的是 agent 的标识符（ID 或 name），
+   * 而不是传统意义上的"类型"概念。这样设计是为了向后兼容。
+   * 
+   * @example 'browser-agent' | 'code-agent' | 'Browser Agent'
+   */
   type: string;
   /** Agent 名称 */
   name: string;
@@ -77,51 +142,73 @@ export interface Workflow {
   description: string;
   /** Agent DAG - 节点之间通过 dependencies 建立关系 */
   agentGraph: AgentNode[];
+  /** Workflow 上下文（如 pageInfo、tabId 等） */
+  context?: any;
   /** 预估执行时间（毫秒） */
   estimatedDuration?: number;
 }
 
-// ============ Goal & Plan ============
-
-export interface Goal {
-  id: string;
-  description: string;
-  constraints?: string[];
-  successCriteria?: string[];
+/**
+ * Workflow 执行选项
+ */
+export interface WorkflowExecutionOptions {
+  timeout?: number;
+  continueOnError?: boolean;
+  maxRetries?: number;
+  maxConcurrency?: number;
+  errorHandler?: any;
 }
 
-export interface Plan {
-  id: string;
-  goal: Goal;
-  steps: PlanStep[];
-  estimatedDuration?: number;
+/**
+ * Workflow 执行结果
+ */
+export interface WorkflowExecutionResult {
+  workflowId: string;
+  status: 'completed' | 'failed' | 'partial';
+  context: any;
+  agentStates: Map<string, AgentExecutionState>;
+  duration: number;
+  successCount: number;
+  failureCount: number;
+  metrics?: ExecutionMetrics;
 }
 
-export interface PlanStep {
-  id: string;
-  description: string;
+/**
+ * Agent 执行状态
+ */
+export interface AgentExecutionState {
   agentId: string;
-  dependencies?: string[];
-  parameters?: Record<string, any>;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+  startTime?: number;
+  endTime?: number;
+  duration?: number;
+  result?: AgentExecutionResult;
+  error?: Error;
+  retryCount: number;
 }
 
-// ============ Context ============
-
-export interface Context {
-  sessionId: string;
-  userId?: string;
-  environment: 'browser' | 'node';
-  metadata?: Record<string, any>;
+/**
+ * 执行指标
+ */
+export interface ExecutionMetrics {
+  totalAgents: number;
+  totalSteps: number;
+  parallelLevels: number;
+  averageAgentDuration: number;
+  peakMemoryUsage?: number;
+  events: ExecutionEvent[];
 }
 
-// ============ Reflection ============
-
-export interface Reflection {
-  taskId: string;
-  success: boolean;
-  learnings: string[];
-  improvements?: string[];
-  timestamp: Date;
+/**
+ * 执行事件
+ */
+export interface ExecutionEvent {
+  type: 'workflow:start' | 'workflow:complete' | 'workflow:error' |
+        'level:start' | 'level:complete' |
+        'agent:start' | 'agent:complete' | 'agent:error' | 'agent:retry' |
+        'state:update';
+  timestamp: number;
+  data: any;
 }
 
 // ============ Memory ============
@@ -136,31 +223,107 @@ export interface Memory {
   accessCount?: number;
 }
 
-// ============ Storage ============
-
-export interface IStorage {
-  get(key: string): Promise<any>;
-  set(key: string, value: any): Promise<void>;
-  delete(key: string): Promise<void>;
-  clear(): Promise<void>;
-  keys(): Promise<string[]>;
-}
-
-// ============ Event Emitter ============
-
-export interface IEventEmitter {
-  on(event: string, handler: (...args: any[]) => void): void;
-  off(event: string, handler: (...args: any[]) => void): void;
-  emit(event: string, ...args: any[]): void;
-}
-
 // ============ LLM 相关 ============
 
-import type { ModelMessage, ToolSet, ToolChoice, StreamTextResult, GenerateTextResult } from 'ai';
+import type { ModelMessage, ToolSet, ToolChoice, StreamTextResult, GenerateTextResult, LanguageModelUsage } from 'ai';
 
-export interface Message {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
+// ============ 跨环境 LLM 客户端接口 ============
+
+/**
+ * 工具调用信息（简化版本，兼容 AI SDK）
+ */
+export interface IToolCall {
+  toolCallId: string;
+  toolName: string;
+  input: any;
+}
+
+/**
+ * 对话结果（兼容 AI SDK 的 GenerateTextResult）
+ */
+export interface IChatResult {
+  text: string;
+  toolCalls?: Array<{ toolCallId: string; toolName: string; [key: string]: any }>;
+  usage?: LanguageModelUsage;  // 使用 AI SDK 的类型
+  finishReason?: string;
+}
+
+/**
+ * LLM 客户端统一接口
+ * 
+ * 设计理念：
+ * - LLMClient（Node.js 版本）实现此接口
+ * - BaseAgent 依赖此接口，而非具体实现
+ * - 直接使用 AI SDK 的 ModelMessage 类型
+ * - 支持工具调用，但不自动执行（与当前设计一致）
+ * 
+ * @example
+ * ```typescript
+ * // Node.js 环境
+ * import { LLMClient } from '@monkey-agent/llm';
+ * import type { ModelMessage } from 'ai';
+ * 
+ * const llm: ILLMClient = new LLMClient({ ... });
+ * const messages: ModelMessage[] = [{ role: 'user', content: 'Hello' }];
+ * const result = await llm.chat(messages);
+ * 
+ * // BaseAgent 使用
+ * const agent = new MyAgent({ llmClient: llm });
+ * ```
+ */
+export interface ILLMClient {
+  /**
+   * 对话（支持工具调用，但不自动执行）
+   * 
+   * @param messages 消息列表（使用 AI SDK 的 ModelMessage 类型）
+   * @param options 调用选项
+   * @returns 对话结果（包含 text 和可选的 toolCalls）
+   */
+  chat<TOOLS extends Record<string, any> = Record<string, any>>(
+    messages: ModelMessage[],
+    options?: {
+      system?: string;
+      tools?: TOOLS;
+      temperature?: number;
+      maxTokens?: number;
+      maxSteps?: number;
+      [key: string]: any;
+    }
+  ): Promise<IChatResult>;
+
+  /**
+   * 流式对话（完整流，包含工具调用）
+   * 
+   * @param messages 消息列表（使用 AI SDK 的 ModelMessage 类型）
+   * @param options 调用选项
+   * @returns StreamTextResult 对象（来自 AI SDK）
+   */
+  stream<TOOLS extends Record<string, any> = Record<string, any>>(
+    messages: ModelMessage[],
+    options?: {
+      system?: string;
+      tools?: TOOLS;
+      temperature?: number;
+      maxTokens?: number;
+      maxSteps?: number;
+      [key: string]: any;
+    }
+  ): any; // 使用 any 避免直接依赖 AI SDK 的 StreamTextResult 类型
+
+  /**
+   * 流式对话（纯文本流）
+   * 
+   * @param messages 消息列表（使用 AI SDK 的 ModelMessage 类型）
+   * @param options 调用选项
+   * @returns 文本流迭代器
+   */
+  streamText(
+    messages: ModelMessage[],
+    options?: {
+      system?: string;
+      [key: string]: any;
+    }
+  ): AsyncIterableIterator<string>;
 }
 
 /**
@@ -575,4 +738,58 @@ export interface EmbedManyResult<VALUE> {
     timestamp?: Date;
     headers?: Record<string, string>;
   };
+}
+
+// ============================================
+// Agent Event System Types
+// ============================================
+
+/**
+ * Agent 事件类型枚举
+ */
+export enum AgentEventType {
+  // 状态事件
+  START = 'agent:start',
+  THINKING = 'agent:thinking',
+  COMPLETE = 'agent:complete',
+  ERROR = 'agent:error',
+  
+  // 流式事件
+  STREAM_TEXT = 'agent:stream-text',
+  STREAM_FINISH = 'agent:stream-finish',
+  
+  // 工具事件
+  TOOL_CALL = 'agent:tool-call',
+  TOOL_RESULT = 'agent:tool-result',
+  TOOL_ERROR = 'agent:tool-error',
+  
+  // 其他
+  COMPRESSED = 'agent:compressed',
+  CONTEXT_LENGTH_ERROR = 'agent:context-length-error',
+  WARNING = 'agent:warning',
+  MAX_ITERATIONS = 'agent:max-iterations',
+}
+
+/**
+ * ReactLoop 内部事件类型（仅供内部使用）
+ * 这些事件由 ReactLoop 发射，由 BaseAgent 转换为 AgentEventType
+ */
+export enum ReactEventType {
+  // ReAct 循环事件
+  THINKING = 'react:thinking',
+  ACTION = 'react:action',
+  OBSERVATION = 'react:observation',
+  OBSERVATION_ERROR = 'react:observation-error',
+  
+  // 流式事件
+  STREAM_TEXT = 'react:stream-text',
+  STREAM_FINISH = 'react:stream-finish',
+  
+  // 上下文管理
+  COMPRESSED = 'react:compressed',
+  CONTEXT_LENGTH_ERROR = 'react:context-length-error',
+  
+  // 其他
+  WARNING = 'react:warning',
+  MAX_ITERATIONS = 'react:max-iterations',
 }

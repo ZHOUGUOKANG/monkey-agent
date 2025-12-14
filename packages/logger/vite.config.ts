@@ -19,20 +19,14 @@ export default defineConfig({
   build: {
     lib: {
       entry: resolve(__dirname, 'src/index.ts'),
-      name: 'MonkeyAgentBase',
-      formats: ['es'],
+      name: 'MonkeyAgentLogger',
       fileName: 'index',
+      formats: ['es'],
     },
     rollupOptions: {
-      external: [
-        '@monkey-agent/types',
-        '@monkey-agent/llm',
-        '@monkey-agent/compression',
-        'eventemitter3',
-        'ai',
-        'zod',
-        /^node:.*/,
-      ],
+      external: ['chalk'],
     },
+    sourcemap: true,
   },
 });
+

@@ -8,19 +8,21 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     }
   },
   "scripts": {
     "dev": "vite build --watch",
     "build": "vite build",
     "test": "vitest",
-    "test:agent": "yarn dlx tsx src/__tests__/BaseAgent.test.ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {
     "@monkey-agent/compression": "workspace:*",
+    "@monkey-agent/context": "workspace:*",
     "@monkey-agent/llm": "workspace:*",
+    "@monkey-agent/logger": "workspace:*",
     "@monkey-agent/types": "workspace:*",
     "ai": "^5.0.112",
     "eventemitter3": "^5.0.1",
@@ -31,6 +33,7 @@
     "@types/node": "^25.0.1",
     "typescript": "^5.9.3",
     "vite": "^5.0.8",
+    "vite-plugin-dts": "^4.5.4",
     "vitest": "^4.0.16"
   }
 }
