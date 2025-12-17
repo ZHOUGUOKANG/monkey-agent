@@ -2,7 +2,7 @@
  * 工作流上下文类型定义
  */
 
-import type { TaskResult } from '@monkey-agent/types';
+import type { AgentExecutionResult } from '@monkey-agent/types';
 
 /**
  * 工作流执行上下文
@@ -18,7 +18,7 @@ export interface WorkflowExecutionContext {
   /** 工作流的完整任务描述 */
   workflowTask: string;
   /** 所有已完成节点的输出（包含完整结果和 summary） */
-  outputs: Map<string, TaskResult>;
+  outputs: Map<string, AgentExecutionResult>;
   /** Agent 之间共享的变量存储（key-value pairs）
    * 用于 valSet/valGet/valList 工具 */
   vals: Map<string, any>;

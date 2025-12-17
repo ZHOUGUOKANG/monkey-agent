@@ -19,9 +19,7 @@ export default defineConfig({
   build: {
     lib: {
       entry: resolve(__dirname, 'src/index.ts'),
-      name: 'MonkeyAgentLLM',
       formats: ['es'],
-      fileName: 'index',
     },
     rollupOptions: {
       external: [
@@ -35,8 +33,12 @@ export default defineConfig({
         '@ai-sdk/google-vertex',
         '@ai-sdk/openai',
         '@openrouter/ai-sdk-provider',
-        '@monkey-agent/types'
+        '@monkey-agent/types',
+        '@monkey-agent/utils',
       ],
+      output: {
+        entryFileNames: '[name].js',
+      },
     },
   },
 });

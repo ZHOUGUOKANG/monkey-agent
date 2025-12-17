@@ -5,13 +5,39 @@
  */
 
 import type { ModelMessage } from 'ai';
-import type { LLMClient } from '@monkey-agent/llm';
+import type { ILLMClient } from '@monkey-agent/types';
+
+/**
+ * 摘要生成器配置
+ */
+export interface SummaryGeneratorConfig {
+  /** 摘要最大字数（默认 200） */
+  maxWords?: number;
+  /** 输出语言（默认 'auto'，自动检测） */
+  language?: 'chinese' | 'english' | 'auto';
+  /** 自定义 prompt 模板（可选） */
+  promptTemplate?: string;
+  /** 摘要策略（默认 'balanced'） */
+  strategy?: 'concise' | 'balanced' | 'detailed';
+}
 
 /**
  * 摘要生成器
  */
 export class SummaryGenerator {
-  constructor(private llmClient: LLMClient) {}
+  private config: Required<SummaryGeneratorConfig>;
+
+  constructor(
+    private llmClient: ILLMClient,
+    config: SummaryGeneratorConfig = {}
+  ) {
+    this.config = {
+      maxWords: config.maxWords ?? 200,
+      language: config.language ?? 'auto',
+      promptTemplate: config.promptTemplate ?? this.getDefaultPromptTemplate(),
+      strategy: config.strategy ?? 'balanced',
+    };
+  }
 
   /**
    * 使用 LLM 总结消息列表
@@ -22,18 +48,8 @@ export class SummaryGenerator {
   async summarizeMessages(messages: ModelMessage[]): Promise<string> {
     const messagesText = this.formatMessagesForSummary(messages);
     
-    const summaryPrompt = `Please provide a concise summary of the following conversation history, preserving key information, decisions, and results.
-Note: This is an early part of a multi-turn conversation and needs to provide context for subsequent dialogue.
-
-Conversation history:
-${messagesText}
-
-Please summarize concisely (within 200 words), focusing on:
-1. Main tasks or operations completed
-2. Key information or data obtained
-3. Important decisions made
-
-Summary:`;
+    // 使用自定义或默认 prompt
+    const summaryPrompt = this.buildSummaryPrompt(messagesText);
     
     const response = await this.llmClient.chat([
       { role: 'user', content: summaryPrompt },
@@ -42,6 +58,78 @@ Summary:`;
     });
     
     return response.text;
+  }
+
+  /**
+   * 构建摘要 prompt
+   * 
+   * @param messagesText 格式化的消息文本
+   * @returns prompt 文本
+   */
+  private buildSummaryPrompt(messagesText: string): string {
+    const languageInstruction = this.getLanguageInstruction();
+    const strategyInstruction = this.getStrategyInstruction();
+    
+    // 如果有自定义模板，使用占位符替换
+    if (this.config.promptTemplate !== this.getDefaultPromptTemplate()) {
+      return this.config.promptTemplate
+        .replace('{messages}', messagesText)
+        .replace('{maxWords}', String(this.config.maxWords))
+        .replace('{language}', languageInstruction)
+        .replace('{strategy}', strategyInstruction);
+    }
+    
+    // 使用默认模板
+    return `Please provide a ${strategyInstruction} summary of the following conversation history, preserving key information, decisions, and results.
+Note: This is an early part of a multi-turn conversation and needs to provide context for subsequent dialogue.
+
+Conversation history:
+${messagesText}
+
+Please summarize concisely (within ${this.config.maxWords} words)${languageInstruction}, focusing on:
+1. Main tasks or operations completed
+2. Key information or data obtained
+3. Important decisions made
+
+Summary:`;
+  }
+
+  /**
+   * 获取语言指令
+   */
+  private getLanguageInstruction(): string {
+    switch (this.config.language) {
+      case 'chinese':
+        return ' in Chinese';
+      case 'english':
+        return ' in English';
+      case 'auto':
+        return ''; // 让 LLM 自动选择
+      default:
+        return '';
+    }
+  }
+
+  /**
+   * 获取策略指令
+   */
+  private getStrategyInstruction(): string {
+    switch (this.config.strategy) {
+      case 'concise':
+        return 'brief';
+      case 'detailed':
+        return 'comprehensive';
+      case 'balanced':
+      default:
+        return 'concise';
+    }
+  }
+
+  /**
+   * 获取默认 prompt 模板
+   */
+  private getDefaultPromptTemplate(): string {
+    return 'DEFAULT_TEMPLATE';
   }
 
   /**
@@ -133,7 +221,7 @@ Summary:`;
  */
 export async function summarizeMessages(
   messages: ModelMessage[],
-  llmClient: LLMClient
+  llmClient: ILLMClient
 ): Promise<string> {
   const generator = new SummaryGenerator(llmClient);
   return generator.summarizeMessages(messages);

@@ -32,6 +32,10 @@ export function validateConfig(config: ContextCompressionConfig): ConfigValidati
     if (config.maxMessages > 10000) {
       warnings.push('maxMessages is very large (>10000), may impact performance');
     }
+    // 新增：检查是否过小
+    if (config.maxMessages < 10) {
+      warnings.push('maxMessages is very small (<10), compression may be triggered too frequently');
+    }
   }
   
   if (config.maxTokens !== undefined) {
@@ -41,17 +45,29 @@ export function validateConfig(config: ContextCompressionConfig): ConfigValidati
     if (config.maxTokens > 1000000) {
       warnings.push('maxTokens is very large (>1M), may exceed model limits');
     }
+    // 新增：检查常见模型限制
+    if (config.maxTokens > 128000) {
+      warnings.push('maxTokens exceeds most model limits (typically 32k-128k)');
+    }
   }
   
   if (config.keepRecentMessages !== undefined) {
     if (config.keepRecentMessages < 1) {
       errors.push('keepRecentMessages must be at least 1');
     }
+    // 新增：检查是否过大
+    if (config.keepRecentMessages > 50) {
+      warnings.push('keepRecentMessages is very large (>50), compression may not be effective');
+    }
   }
   
   if (config.keepRecentRounds !== undefined) {
     if (config.keepRecentRounds < 1) {
       errors.push('keepRecentRounds must be at least 1');
+    }
+    // 新增：检查是否过大
+    if (config.keepRecentRounds > 10) {
+      warnings.push('keepRecentRounds is very large (>10), compression may not be effective');
     }
   }
   
@@ -65,9 +81,31 @@ export function validateConfig(config: ContextCompressionConfig): ConfigValidati
     
     // 检查是否有足够的空间进行压缩
     const minCompressibleMessages = 2;
-    if (config.maxMessages - config.keepRecentMessages < minCompressibleMessages) {
+    const gap = config.maxMessages - config.keepRecentMessages;
+    if (gap < minCompressibleMessages) {
       warnings.push(
-        `Gap between maxMessages and keepRecentMessages is too small (< ${minCompressibleMessages}), may not compress effectively`
+        `Gap between maxMessages and keepRecentMessages is too small (${gap} < ${minCompressibleMessages}), may not compress effectively`
+      );
+    }
+    
+    // 新增：检查压缩比例是否合理
+    const keepRatio = config.keepRecentMessages / config.maxMessages;
+    if (keepRatio > 0.8) {
+      warnings.push(
+        `keepRecentMessages is very close to maxMessages (${(keepRatio * 100).toFixed(0)}%), compression will be minimal`
+      );
+    }
+  }
+  
+  // 检查 maxMessages 和 keepRecentRounds 的关系
+  if (config.maxMessages !== undefined && config.keepRecentRounds !== undefined) {
+    // 假设每轮平均 3-5 条消息
+    const estimatedMessagesPerRound = 4;
+    const estimatedKeptMessages = config.keepRecentRounds * estimatedMessagesPerRound;
+    
+    if (estimatedKeptMessages >= config.maxMessages * 0.8) {
+      warnings.push(
+        `keepRecentRounds (${config.keepRecentRounds}) may keep too many messages relative to maxMessages (${config.maxMessages})`
       );
     }
   }
@@ -84,6 +122,24 @@ export function validateConfig(config: ContextCompressionConfig): ConfigValidati
         `keepRecentMessages (${config.keepRecentMessages}) and keepRecentRounds (${config.keepRecentRounds}) may be inconsistent (ratio: ${ratio.toFixed(2)})`
       );
     }
+  }
+  
+  // 新增：检查 maxTokens 和 maxMessages 的关系
+  if (config.maxTokens !== undefined && config.maxMessages !== undefined) {
+    // 假设每条消息平均 50-200 tokens
+    const avgTokensPerMessage = 100;
+    const estimatedTokens = config.maxMessages * avgTokensPerMessage;
+    
+    if (estimatedTokens < config.maxTokens * 0.5) {
+      warnings.push(
+        `maxMessages (${config.maxMessages}) may trigger compression before maxTokens (${config.maxTokens}) threshold is reached`
+      );
+    }
+  }
+  
+  // 新增：检查是否启用了压缩
+  if (config.enabled === false) {
+    warnings.push('Compression is disabled (enabled: false)');
   }
   
   return {
@@ -108,11 +164,7 @@ export function validateConfigOrThrow(config: ContextCompressionConfig): void {
     throw new ConfigValidationError(result.errors, { config });
   }
   
-  // 打印警告（如果有）
-  if (result.warnings && result.warnings.length > 0) {
-    console.warn('[压缩配置警告]');
-    result.warnings.forEach(warning => console.warn(`  - ${warning}`));
-  }
+  // 警告信息已包含在 result 中，由调用者决定如何处理
 }
 
 /**
@@ -214,7 +266,7 @@ export function validateCompressionOptions(options: {
  * @returns 是否有足够的消息可以压缩
  */
 export function hasEnoughMessagesToCompress(
-  totalMessages: number,
+  _totalMessages: number,
   keepStartIndex: number,
   minCompressCount: number = 2
 ): { sufficient: boolean; error?: string } {

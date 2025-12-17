@@ -6,12 +6,14 @@
 
 import { tool } from 'ai';
 import { z } from 'zod';
+import type { ILLMClient } from '@monkey-agent/types';
 import type { ModelMessage } from 'ai';
-import type { LLMClient } from '@monkey-agent/llm';
+import { Logger } from '@monkey-agent/logger';
 
 import type { 
   CompressionResult, 
   CompressionOptions} from './types';
+import type { SummaryGeneratorConfig } from './SummaryGenerator';
 import { 
   InsufficientMessagesError, 
   InvalidStrategyError 
@@ -31,10 +33,12 @@ import {
 export class CompressionOrchestrator {
   private boundaryFinder: MessageBoundaryFinder;
   private tokenEstimator: TokenEstimator;
+  private logger: Logger;
 
   constructor() {
     this.boundaryFinder = new MessageBoundaryFinder();
     this.tokenEstimator = new TokenEstimator();
+    this.logger = new Logger('CompressionOrchestrator');
   }
 
   /**
@@ -44,70 +48,133 @@ export class CompressionOrchestrator {
    * 1. 基于轮次：保留最近 N 轮完整对话（适合多轮对话）
    * 2. 基于消息数：保留最近 N 条消息（适合单轮多工具调用）
    * 
-   * @param history 对话历史
+   * @param history 对话历史（使用 ModelMessage 类型）
    * @param options 压缩选项
    * @param llmClient LLM 客户端（用于生成摘要）
+   * @param summaryConfig 摘要生成配置（可选）
    * @returns 压缩结果
    */
   async compressHistory(
     history: ModelMessage[],
     options: CompressionOptions,
-    llmClient: LLMClient
+    llmClient: ILLMClient,
+    summaryConfig?: SummaryGeneratorConfig
   ): Promise<CompressionResult> {
-    const { keepRounds, keepMessages } = options;
+    const { keepRounds, keepMessages, silent = false } = options;
     
-    // 验证压缩选项
-    const validation = validateCompressionOptions(options);
-    if (!validation.valid) {
-      throw new InvalidStrategyError(validation.error || 'Invalid compression options');
-    }
+    // 收集警告信息
+    const warnings: string[] = [];
     
-    // 确定使用哪种策略并找到边界
-    let keepStartIndex: number;
-    let strategyUsed: string;
-    
-    if (keepRounds !== undefined && keepRounds > 0) {
-      // 策略 1: 基于轮次（保留完整的 user → assistant → tool 对话轮）
-      const result = this.boundaryFinder.findRoundBoundary(history, keepRounds);
-      keepStartIndex = result.index;
-      strategyUsed = `rounds (${result.roundCount} rounds found)`;
-    } else if (keepMessages !== undefined && keepMessages > 0) {
-      // 策略 2: 基于消息数（保留最近 N 条消息，确保不破坏工具调用配对）
-      keepStartIndex = this.boundaryFinder.findMessageBoundary(history, keepMessages);
-      strategyUsed = 'messages';
-    } else {
-      throw new InvalidStrategyError('Must specify either keepRounds or keepMessages');
-    }
-    
-    // 检查是否有足够的消息可以压缩
-    const sufficiency = hasEnoughMessagesToCompress(history.length, keepStartIndex);
-    if (!sufficiency.sufficient) {
-      throw new InsufficientMessagesError(
-        keepStartIndex,
-        2,
-        { 
-          strategy: strategyUsed, 
-          totalMessages: history.length,
-          reason: sufficiency.error 
+    try {
+      // 验证压缩选项
+      const validation = validateCompressionOptions(options);
+      if (!validation.valid) {
+        const error = new InvalidStrategyError(validation.error || 'Invalid compression options');
+        if (silent) {
+          return this.createFailedResult(history, error.message, warnings);
         }
-      );
+        throw error;
+      }
+      
+      // 确定使用哪种策略并找到边界
+      let keepStartIndex: number;
+      let strategyUsed: string;
+      
+      if (keepRounds !== undefined && keepRounds > 0) {
+        // 策略 1: 基于轮次（保留完整的 user → assistant → tool 对话轮）
+        const result = this.boundaryFinder.findRoundBoundary(history, keepRounds);
+        keepStartIndex = result.index;
+        strategyUsed = `rounds (${result.roundCount} rounds found)`;
+      } else if (keepMessages !== undefined && keepMessages > 0) {
+        // 策略 2: 基于消息数（保留最近 N 条消息，确保不破坏工具调用配对）
+        keepStartIndex = this.boundaryFinder.findMessageBoundary(history, keepMessages);
+        strategyUsed = 'messages';
+      } else {
+        const error = new InvalidStrategyError('Must specify either keepRounds or keepMessages');
+        if (silent) {
+          return this.createFailedResult(history, error.message, warnings);
+        }
+        throw error;
+      }
+      
+      // 检查是否有足够的消息可以压缩
+      const sufficiency = hasEnoughMessagesToCompress(history.length, keepStartIndex);
+      if (!sufficiency.sufficient) {
+        const error = new InsufficientMessagesError(
+          keepStartIndex,
+          2,
+          { 
+            strategy: strategyUsed, 
+            totalMessages: history.length,
+            reason: sufficiency.error 
+          }
+        );
+        if (silent) {
+          return this.createFailedResult(history, error.message, warnings);
+        }
+        throw error;
+      }
+      
+      // 分割：要压缩的 vs 要保留的
+      const toCompress = history.slice(0, keepStartIndex);
+      const toKeep = history.slice(keepStartIndex);
+      
+      // 验证保留消息的工具调用配对
+      const pairingValidation = validateToolCallPairing(toKeep);
+      if (!pairingValidation.valid && pairingValidation.issues) {
+        warnings.push(...pairingValidation.issues.map(issue => `Tool pairing: ${issue}`));
+      }
+      
+      // 使用 LLM 总结早期对话
+      const summaryGenerator = new SummaryGenerator(llmClient, summaryConfig);
+      const summary = await summaryGenerator.summarizeMessages(toCompress);
+      
+      // 构建包含摘要的完整历史
+      const compressedHistory = this.buildCompressedHistory(summary, toKeep);
+      
+      return {
+        success: true,
+        summary,
+        originalLength: history.length,
+        newLength: compressedHistory.length,
+        compressedCount: toCompress.length,
+        keptMessages: toKeep,
+        compressedHistory,
+        warnings: warnings.length > 0 ? warnings : undefined,
+      };
+    } catch (error: any) {
+      if (silent) {
+        const errorMessage = error.message || 'Compression failed';
+        warnings.push(`Error: ${errorMessage}`);
+        return this.createFailedResult(history, errorMessage, warnings);
+      }
+      throw error;
     }
-    
-    // 分割：要压缩的 vs 要保留的
-    const toCompress = history.slice(0, keepStartIndex);
-    const toKeep = history.slice(keepStartIndex);
-    
-    // 使用 LLM 总结早期对话
-    const summaryGenerator = new SummaryGenerator(llmClient);
-    const summary = await summaryGenerator.summarizeMessages(toCompress);
-    
+  }
+
+  /**
+   * 创建失败的压缩结果（静默模式）
+   * 
+   * @param history 原始历史
+   * @param errorMessage 错误信息
+   * @param warnings 警告列表
+   * @returns 失败的压缩结果
+   */
+  private createFailedResult(
+    history: ModelMessage[],
+    errorMessage: string,
+    warnings: string[]
+  ): CompressionResult {
+    warnings.push(`Compression failed: ${errorMessage}`);
     return {
-      success: true,
-      summary,
+      success: false,
+      summary: '',
       originalLength: history.length,
-      newLength: toKeep.length + 1, // +1 for summary message
-      compressedCount: toCompress.length,
-      keptMessages: toKeep,
+      newLength: history.length,
+      compressedCount: 0,
+      keptMessages: history,
+      compressedHistory: history,
+      warnings,
     };
   }
 
@@ -125,8 +192,9 @@ export class CompressionOrchestrator {
     // 验证保留消息的完整性
     const validation = validateToolCallPairing(recentMessages);
     if (!validation.valid) {
-      console.warn('[压缩警告] 保留的消息存在配对问题:');
-      validation.issues?.forEach(issue => console.warn(`  - ${issue}`));
+      this.logger.warn('保留的消息存在配对问题', {
+        issues: validation.issues
+      });
     }
     
     return [
@@ -291,7 +359,7 @@ export function createCompressionTool() {
 export async function compressHistory(
   history: ModelMessage[],
   options: CompressionOptions,
-  llmClient: LLMClient
+  llmClient: ILLMClient
 ): Promise<CompressionResult> {
   return defaultOrchestrator.compressHistory(history, options, llmClient);
 }
@@ -311,7 +379,7 @@ export function buildCompressedHistory(
  */
 export async function summarizeMessages(
   messages: ModelMessage[],
-  llmClient: LLMClient
+  llmClient: ILLMClient
 ): Promise<string> {
   const generator = new SummaryGenerator(llmClient);
   return generator.summarizeMessages(messages);

@@ -12,14 +12,13 @@ export type {
   ContextCompressionConfig,
   CompressionResult,
   CompressionOptions,
-  TypedModelMessage,
-  MessageContent,
-  TextContent,
-  ToolCallContent,
-  ToolResultContent,
   ConfigValidationResult,
   ToolPairingValidationResult,
 } from './types';
+
+export type { TokenEstimatorConfig } from './TokenEstimator';
+export type { SummaryGeneratorConfig } from './SummaryGenerator';
+export type { MessageBoundaryFinderConfig, RoundBoundaryResult } from './MessageBoundaryFinder';
 
 // ============================================
 // 错误类导出

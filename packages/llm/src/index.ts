@@ -2,16 +2,16 @@
 export { LLMClient } from './LLMClient';
 export { ReasoningConfigBuilder } from './ReasoningConfigBuilder';
 
+// ============ Message Builder Utilities ============
+export { buildAssistantMessage, buildToolResultMessage } from './message-builders';
+
 // ============ Constants & Presets ============
 export {
-  DEFAULT_MODELS,
   REASONING_PRESETS,
   CONFIG_LIMITS,
   SUPPORTED_PROVIDERS,
   PROVIDERS_WITHOUT_API_KEY,
   REASONING_EFFORT_OPTIONS,
-  MODEL_ALIASES,
-  resolveModelAlias,
 } from './constants';
 
 // ============ Types from Core ============

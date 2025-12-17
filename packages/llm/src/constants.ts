@@ -1,22 +1,6 @@
 import type { ReasoningConfig } from '@monkey-agent/types';
 
 /**
- * 默认模型配置
- * 
- * 每个提供商的推荐默认模型
- */
-export const DEFAULT_MODELS: Record<string, string> = {
-  openai: 'gpt-4o',
-  anthropic: 'claude-3-5-sonnet-20241022',
-  google: 'gemini-1.5-pro',
-  openrouter: 'openai/gpt-4o',
-  bedrock: 'anthropic.claude-3-5-sonnet-20241022-v2:0',
-  azure: 'gpt-4o',
-  vertex: 'gemini-1.5-pro',
-  deepseek: 'deepseek-chat',
-} as const;
-
-/**
  * 推理预设配置
  * 
  * 预定义的推理配置，适用于不同场景
@@ -118,42 +102,3 @@ export const PROVIDERS_WITHOUT_API_KEY = [
  */
 export const REASONING_EFFORT_OPTIONS = ['low', 'medium', 'high'] as const;
 
-/**
- * 常用模型别名
- * 提供更友好的模型名称
- */
-export const MODEL_ALIASES: Record<string, string> = {
-  // OpenAI
-  'gpt4': 'gpt-4o',
-  'gpt4o': 'gpt-4o',
-  'gpt4-turbo': 'gpt-4-turbo',
-  'gpt35': 'gpt-3.5-turbo',
-  
-  // Anthropic
-  'claude': 'claude-3-5-sonnet-20241022',
-  'claude-sonnet': 'claude-3-5-sonnet-20241022',
-  'claude-opus': 'claude-3-opus-20240229',
-  'claude-haiku': 'claude-3-5-haiku-20241022',
-  
-  // Google
-  'gemini': 'gemini-1.5-pro',
-  'gemini-pro': 'gemini-1.5-pro',
-  'gemini-flash': 'gemini-1.5-flash',
-} as const;
-
-/**
- * 解析模型别名
- * 
- * @param modelName 模型名称或别名
- * @returns 实际模型名称
- * 
- * @example
- * ```typescript
- * resolveModelAlias('gpt4') // 返回: 'gpt-4o'
- * resolveModelAlias('claude') // 返回: 'claude-3-5-sonnet-20241022'
- * resolveModelAlias('gpt-4o') // 返回: 'gpt-4o' (原样返回)
- * ```
- */
-export function resolveModelAlias(modelName: string): string {
-  return MODEL_ALIASES[modelName] ?? modelName;
-}

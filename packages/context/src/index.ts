@@ -4,14 +4,18 @@
  * 提供工作流执行过程中的上下文管理和共享变量功能
  */
 
-// 类型导出
+// ============ Context Manager ============
+export { ContextManager } from './ContextManager';
+export type { ContextManagerConfig } from './ContextManager';
+
+// ============ Types ============
 export type {
   WorkflowExecutionContext,
   AgentNodeStep,
   ParentNodeInfo,
 } from './types';
 
-// 工具函数导出
+// ============ Context Tools ============
 export {
   createContextTools,
   isContextTool,
@@ -21,4 +25,3 @@ export {
 export {
   buildContextInjectionPrompt,
 } from './context-injection';
-

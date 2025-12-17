@@ -1,21 +1,21 @@
 {
   "name": "@monkey-agent/llm",
   "version": "0.1.0",
-  "description": "Monkey Agent - LLM 客户端",
+  "description": "Monkey Agent - LLM 客户端（Node.js）",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     }
   },
   "scripts": {
     "dev": "vite build --watch",
     "build": "vite build",
     "test": "vitest",
-    "test:llm": "yarn dlx tsx src/__tests__/LLMClient.test.ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {

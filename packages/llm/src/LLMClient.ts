@@ -23,16 +23,16 @@ import {
   EmbeddingOptions,
   EmbedManyOptions,
   EmbedResult,
-  EmbedManyResult
+  EmbedManyResult,
+  ILLMClient,
 } from '@monkey-agent/types';
 import { ReasoningConfigBuilder } from './ReasoningConfigBuilder';
 import { 
-  DEFAULT_MODELS, 
   CONFIG_LIMITS, 
   SUPPORTED_PROVIDERS, 
-  PROVIDERS_WITHOUT_API_KEY,
-  resolveModelAlias 
+  PROVIDERS_WITHOUT_API_KEY
 } from './constants';
+import { buildAssistantMessage, buildToolResultMessage } from './message-builders';
 
 /**
  * LLM 客户端
@@ -43,10 +43,11 @@ import {
  * 2. 提供完整的 tool call 事件，由调用者决定如何处理
  * 3. 提供辅助方法简化常见操作
  * 4. 统一的推理配置接口
+ * 5. 直接实现 ILLMClient 接口，无需 Adapter
  * 
  * @see README.md 查看详细使用文档
  */
-export class LLMClient implements LLMProvider {
+export class LLMClient implements LLMProvider, ILLMClient {
   private languageModel: LanguageModel;
   private temperature?: number;
   private maxOutputTokens?: number;
@@ -221,10 +222,15 @@ export class LLMClient implements LLMProvider {
    */
   private createLanguageModel(config: LLMConfig): LanguageModel {
     const provider = config.provider ?? 'openai';
-    // 解析模型别名并使用默认模型（如果未指定）
-    const model = config.model 
-      ? resolveModelAlias(config.model) 
-      : this.getDefaultModel(provider);
+    
+    if (!config.model) {
+      throw new Error(
+        `Model name is required for provider "${provider}". ` +
+        `Please provide config.model.`
+      );
+    }
+    
+    const model = config.model;
     
     const providerConfig = {
       apiKey: config.apiKey,
@@ -296,16 +302,6 @@ export class LLMClient implements LLMProvider {
           `Please check your config.provider value.`
         );
     }
-  }
-
-  /**
-   * 获取默认模型名称
-   * 
-   * @param provider Provider 类型
-   * @returns 默认模型名称
-   */
-  private getDefaultModel(provider: string): string {
-    return DEFAULT_MODELS[provider] ?? DEFAULT_MODELS.openai;
   }
 
   /**
@@ -391,7 +387,7 @@ export class LLMClient implements LLMProvider {
   }
 
   /**
-   * 普通对话（非流式）
+   * 普通对话（非流式）- 实现 ILLMClient 接口
    * 
    * 发送消息并等待完整响应。支持工具调用、推理配置等高级功能。
    * 
@@ -510,111 +506,26 @@ export class LLMClient implements LLMProvider {
   /**
    * 构建助手消息（包含文本和工具调用）
    * 
-   * 用于在工具调用后构建助手消息，方便添加到对话历史。
-   * 
-   * 注意：
-   * - AI SDK 5.x 的 tool-call content 包含 input 字段（不是 args）
-   * - 当 LLM 同时返回文本和工具调用时，必须将文本部分也包含在助手消息中。
-   * 
-   * @param toolCalls 工具调用列表
-   * @param text 可选的文本内容（推理/思考过程）
-   * @returns 助手消息
+   * 委托给独立的工具函数
    */
   buildAssistantMessage(
     toolCalls: Array<{ toolCallId: string; toolName: string; input?: any }>,
     text?: string
   ): ModelMessage {
-    // 构建 content 数组
-    type TextContent = { type: 'text'; text: string };
-    type ToolCallContent = { 
-      type: 'tool-call'; 
-      toolCallId: string; 
-      toolName: string; 
-      input: Record<string, any> 
-    };
-    
-    const content: Array<TextContent | ToolCallContent> = [];
-    
-    // 如果有文本内容，先添加文本部分
-    if (text && text.trim().length > 0) {
-      content.push({
-        type: 'text',
-        text: text.trim(),
-      });
-    }
-    
-    // 添加工具调用部分
-    // 注意：AI SDK 5.x 使用 input 字段，不是 args
-    content.push(...toolCalls.map(tc => ({
-      type: 'tool-call' as const,
-      toolCallId: tc.toolCallId,
-      toolName: tc.toolName,
-      // 确保 input 始终是一个对象（即使为空）
-      // 这对于某些提供商（如 LiteLLM/OpenRouter）是必需的
-      input: tc.input ?? {},
-    })));
-    
-    return {
-      role: 'assistant',
-      content,
-    } as ModelMessage;
+    return buildAssistantMessage(toolCalls, text);
   }
 
   /**
    * 构建工具结果消息
    * 
-   * 简化工具执行结果的消息构建
-   * 
-   * @param toolCall 工具调用信息
-   * @param result 工具执行结果
-   * @param isError 是否为错误结果
-   * @returns 工具结果消息
+   * 委托给独立的工具函数
    */
   buildToolResultMessage(
     toolCall: { toolCallId: string; toolName: string },
     result: any,
     isError: boolean = false
   ): ModelMessage {
-    // AI SDK 5.x 要求 tool-result 的 output 必须是包含 type 和 value 字段的对象
-    // 注意：使用 value 字段，不是 text
-    type ToolOutput = { type: string; value: string };
-    
-    let output: ToolOutput;
-    if (typeof result === 'string') {
-      output = { type: 'text', value: result };
-    } else if (result && typeof result === 'object') {
-      // 如果已经有 type 和 value 字段，直接使用
-      if ('type' in result && 'value' in result) {
-        output = result as ToolOutput;
-      } else {
-        // 否则包装成 text 类型，使用 JSON 字符串
-        output = { type: 'text', value: JSON.stringify(result) };
-      }
-    } else {
-      // 其他类型（number, boolean等），转换为 text
-      output = { type: 'text', value: String(result) };
-    }
-    
-    type ToolResultContent = {
-      type: 'tool-result';
-      toolCallId: string;
-      toolName: string;
-      output: ToolOutput;
-      isError?: boolean;
-    };
-    
-    const content: ToolResultContent = {
-      type: 'tool-result',
-      toolCallId: toolCall.toolCallId,
-      toolName: toolCall.toolName,
-      output,
-      ...(isError && { isError: true }),
-    };
-    
-    return {
-      role: 'tool',
-      content: [content],
-    } as ModelMessage;
+    return buildToolResultMessage(toolCall, result, isError);
   }
 
   // ============ Embedding 方法 ============
@@ -634,23 +545,14 @@ export class LLMClient implements LLMProvider {
     const provider = this.provider ?? 'openai';
     const config = this.providerConfig;
     
-    // 默认 embedding 模型
-    const DEFAULT_EMBEDDING_MODELS: Record<string, string> = {
-      openai: 'text-embedding-3-small',
-      google: 'text-embedding-004',
-      bedrock: 'amazon.titan-embed-text-v1',
-      azure: 'text-embedding-3-small',
-      vertex: 'text-embedding-004',
-    };
-
-    const model = modelName ?? DEFAULT_EMBEDDING_MODELS[provider];
-    
-    if (!model) {
+    if (!modelName) {
       throw new Error(
-        `Provider "${provider}" does not have a default embedding model configured. ` +
-        `Please specify a model name explicitly.`
+        `Embedding model name is required for provider "${provider}". ` +
+        `Please specify a model name in the embed() or embedMany() call.`
       );
     }
+    
+    const model = modelName;
 
     switch (provider) {
       case 'openai': {
@@ -802,3 +704,4 @@ export class LLMClient implements LLMProvider {
     return cosineSimilarity(embedding1, embedding2);
   }
 }
+

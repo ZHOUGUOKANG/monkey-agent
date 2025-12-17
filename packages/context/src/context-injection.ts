@@ -1,4 +1,4 @@
-import type { WorkflowExecutionContext, AgentNodeStep, ParentNodeInfo } from './types';
+import type { AgentNodeStep, ParentNodeInfo } from './types';
 
 /**
  * 构建完整的上下文注入 prompt

@@ -2,6 +2,8 @@
 
 统一的 LLM 客户端，基于 Vercel AI SDK，支持多种 LLM 提供商和 embedding 功能。
 
+> **注意**：此包仅支持 Node.js 环境。所有 Agent 逻辑都在 NestJS 服务端运行。
+
 ## 特性
 
 - 🎯 **统一接口** - 支持 OpenAI、Anthropic、Google、DeepSeek 等多个提供商
@@ -52,10 +54,13 @@ for await (const chunk of client.streamText([
 const client = new LLMClient({
   provider: 'openai',
   apiKey: process.env.OPENAI_API_KEY,
+  model: 'gpt-4o', // 必须指定 chat 模型
 });
 
-// 生成单个文本的 embedding
-const result = await client.embed('sunny day at the beach');
+// 生成单个文本的 embedding（必须指定 embedding 模型）
+const result = await client.embed('sunny day at the beach', {
+  model: 'text-embedding-3-small'
+});
 
 console.log(result.embedding);        // [0.1, 0.2, ...] (1536 维)
 console.log(result.usage.tokens);     // Token 使用量
@@ -65,12 +70,14 @@ console.log(result.value);            // 原始输入文本
 #### 批量 Embedding
 
 ```typescript
-// 批量生成 embeddings
+// 批量生成 embeddings（必须指定 embedding 模型）
 const result = await client.embedMany([
   'sunny day at the beach',
   'rainy afternoon in the city',
   'snowy night in the mountains',
-]);
+], {
+  model: 'text-embedding-3-small'
+});
 
 console.log(result.embeddings);       // [[...], [...], [...]]
 console.log(result.usage.tokens);     // 总 Token 使用量
@@ -82,12 +89,16 @@ console.log(result.values);           // 原始输入数组
 ```typescript
 // 1. 生成查询和文档的 embeddings
 const [queryResult, docsResult] = await Promise.all([
-  client.embed('What is the weather like?'),
+  client.embed('What is the weather like?', { 
+    model: 'text-embedding-3-small' 
+  }),
   client.embedMany([
     'The weather is sunny today',
     'It is raining heavily',
     'Machine learning is a subset of AI',
-  ]),
+  ], { 
+    model: 'text-embedding-3-small' 
+  }),
 ]);
 
 // 2. 计算相似度
@@ -139,7 +150,7 @@ import { tool, z } from '@monkey-agent/llm';
 // 定义工具
 const weatherTool = tool({
   description: 'Get the current weather',
-  parameters: z.object({
+  inputSchema: z.object({
     location: z.string().describe('City name'),
   }),
   execute: async ({ location }) => {
@@ -187,18 +198,22 @@ const client = new LLMClient({
 
 ## 支持的提供商
 
-| 提供商 | Provider | 默认模型 | Embedding 支持 |
-|--------|----------|----------|---------------|
-| OpenAI | `openai` | gpt-4o | ✅ text-embedding-3-small |
-| Anthropic | `anthropic` | claude-3-5-sonnet | ❌ |
-| Google Gemini | `google` | gemini-1.5-pro | ✅ text-embedding-004 |
-| DeepSeek | `deepseek` | deepseek-chat | ❌ |
-| Amazon Bedrock | `bedrock` | claude-3-5-sonnet | ✅ amazon.titan-embed-text-v1 |
-| Azure OpenAI | `azure` | gpt-4o | ✅ text-embedding-3-small |
-| Google Vertex | `vertex` | gemini-1.5-pro | ✅ text-embedding-004 |
-| OpenRouter | `openrouter` | gpt-4o | ❌ |
+| 提供商 | Provider | 需要配置 | Embedding 支持 |
+|--------|----------|---------|---------------|
+| OpenAI | `openai` | apiKey, model | ✅ |
+| Anthropic | `anthropic` | apiKey, model | ❌ |
+| Google Gemini | `google` | apiKey, model | ✅ |
+| DeepSeek | `deepseek` | apiKey, model | ❌ |
+| Amazon Bedrock | `bedrock` | region/credentials, model | ✅ |
+| Azure OpenAI | `azure` | apiKey, resourceName, model | ✅ |
+| Google Vertex | `vertex` | project, model | ✅ |
+| OpenRouter | `openrouter` | apiKey, model | ❌ |
+
+> **注意**: `model` 参数是必需的，必须明确指定要使用的模型。
 
 ## Embedding 模型
+
+所有 embedding 调用都需要明确指定模型名称。
 
 ### OpenAI
 
@@ -206,15 +221,16 @@ const client = new LLMClient({
 const client = new LLMClient({
   provider: 'openai',
   apiKey: process.env.OPENAI_API_KEY,
+  model: 'gpt-4o', // 必须指定 chat 模型
 });
 
-// 默认: text-embedding-3-small (1536 维)
-await client.embed('text');
+// text-embedding-3-small (1536 维)
+await client.embed('text', { model: 'text-embedding-3-small' });
 
-// 大模型: text-embedding-3-large (3072 维)
+// text-embedding-3-large (3072 维)
 await client.embed('text', { model: 'text-embedding-3-large' });
 
-// 旧版: text-embedding-ada-002 (1536 维)
+// text-embedding-ada-002 (1536 维)
 await client.embed('text', { model: 'text-embedding-ada-002' });
 ```
 
@@ -224,10 +240,11 @@ await client.embed('text', { model: 'text-embedding-ada-002' });
 const client = new LLMClient({
   provider: 'google',
   apiKey: process.env.GOOGLE_API_KEY,
+  model: 'gemini-1.5-pro', // 必须指定 chat 模型
 });
 
 // text-embedding-004 (768 维)
-await client.embed('text');
+await client.embed('text', { model: 'text-embedding-004' });
 ```
 
 ### Amazon Bedrock
@@ -236,10 +253,11 @@ await client.embed('text');
 const client = new LLMClient({
   provider: 'bedrock',
   region: 'us-east-1',
+  model: 'anthropic.claude-3-5-sonnet-20241022-v2:0', // 必须指定 chat 模型
 });
 
 // amazon.titan-embed-text-v1 (1536 维)
-await client.embed('text');
+await client.embed('text', { model: 'amazon.titan-embed-text-v1' });
 
 // amazon.titan-embed-text-v2:0 (1024 维)
 await client.embed('text', { model: 'amazon.titan-embed-text-v2:0' });

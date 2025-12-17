@@ -5,47 +5,6 @@
 import type { ModelMessage } from 'ai';
 
 /**
- * 文本内容
- */
-export interface TextContent {
-  type: 'text';
-  text: string;
-}
-
-/**
- * 工具调用内容
- */
-export interface ToolCallContent {
-  type: 'tool-call';
-  toolCallId: string;
-  toolName: string;
-  args: Record<string, unknown>;
-}
-
-/**
- * 工具结果内容
- */
-export interface ToolResultContent {
-  type: 'tool-result';
-  toolCallId: string;
-  toolName: string;
-  result: unknown;
-}
-
-/**
- * 消息内容联合类型
- */
-export type MessageContent = TextContent | ToolCallContent | ToolResultContent;
-
-/**
- * 类型化的模型消息
- */
-export interface TypedModelMessage {
-  role: 'user' | 'assistant' | 'tool' | 'system';
-  content: string | MessageContent[];
-}
-
-/**
  * 上下文压缩配置
  */
 export interface ContextCompressionConfig {
@@ -74,8 +33,12 @@ export interface CompressionResult {
   originalLength: number;
   newLength: number;
   compressedCount: number;
-  /** 要保留的消息（已经过边界调整） */
+  /** 要保留的消息（已经过边界调整，不包含摘要） */
   keptMessages: ModelMessage[];
+  /** 包含摘要的完整压缩历史（可直接使用） */
+  compressedHistory: ModelMessage[];
+  /** 压缩过程中的警告信息 */
+  warnings?: string[];
 }
 
 /**
@@ -86,6 +49,8 @@ export interface CompressionOptions {
   keepRounds?: number;
   /** 保留的最近消息数（用于单轮多工具调用场景） */
   keepMessages?: number;
+  /** 静默模式：压缩失败时返回原历史而不抛出错误（默认 false） */
+  silent?: boolean;
 }
 
 /**

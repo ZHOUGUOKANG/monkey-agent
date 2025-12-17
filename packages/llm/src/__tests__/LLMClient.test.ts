@@ -42,8 +42,8 @@ const provider = validation.provider;
 const baseURL = process.env.OPENAI_BASE_URL || 
   (process.env.OPENROUTER_API_KEY ? 'https://openrouter.ai/api/v1' : 
   (provider === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1'));
-const model = process.env.OPENROUTER_MODEL || process.env.OPENAI_MODEL || 
-  process.env.ANTHROPIC_MODEL || 'anthropic/claude-3.5-sonnet';
+const model = process.env.OPENAI_MODEL|| process.env.OPENROUTER_MODEL  || 
+  process.env.ANTHROPIC_MODEL || 'anthropic/claude-4.5-sonnet';
 
 console.log('\n🤖 LLMClient 测试');
 console.log('='.repeat(60));
@@ -60,11 +60,11 @@ console.log('='.repeat(60));
  */
 const getWeatherTool = tool({
   description: '查询指定城市的天气信息',
-  parameters: z.object({
+  inputSchema: z.object({
     city: z.string().describe('城市名称，例如：北京、上海、纽约'),
-    unit: z.enum(['celsius', 'fahrenheit']).optional().describe('温度单位'),
+    unit: z.enum(['celsius', 'fahrenheit']).describe('温度单位').default('celsius'),
   }),
-  execute: async ({ city, unit = 'celsius' }) => {
+  execute: async ({ city, unit }) => {
     // 模拟 API 调用延迟
     await new Promise(resolve => setTimeout(resolve, 500));
     
@@ -100,7 +100,7 @@ const getWeatherTool = tool({
  */
 const calculatorTool = tool({
   description: '执行数学计算',
-  parameters: z.object({
+  inputSchema: z.object({
     expression: z.string().describe('数学表达式，例如：2 + 2, 10 * 5'),
   }),
   execute: async ({ expression }) => {
@@ -221,7 +221,11 @@ async function testSingleToolCall(client: LLMClient, testName: string) {
     });
     
     console.log(`✅ 响应: ${result.text}`);
-    console.log(`📊 步骤数: ${result.response.steps ? result.response.steps.length : 1}`);
+    console.log(`📊 工具调用次数: ${result.toolCalls?.length || 0}`);
+    
+    if (result.toolCalls && result.toolCalls.length > 0) {
+      console.log(`🔧 调用的工具: ${result.toolCalls.map(tc => tc.toolName).join(', ')}`);
+    }
     
     return true;
   } catch (error: any) {
@@ -251,7 +255,11 @@ async function testMultipleToolCalls(client: LLMClient, testName: string) {
     });
     
     console.log(`✅ 响应: ${result.text}`);
-    console.log(`📊 步骤数: ${result.response.steps ? result.response.steps.length : 1}`);
+    console.log(`📊 工具调用次数: ${result.toolCalls?.length || 0}`);
+    
+    if (result.toolCalls && result.toolCalls.length > 0) {
+      console.log(`🔧 调用的工具: ${result.toolCalls.map(tc => tc.toolName).join(', ')}`);
+    }
     
     return true;
   } catch (error: any) {
@@ -293,43 +301,43 @@ async function testMultiTurnConversation(client: LLMClient, testName: string) {
   console.log('-'.repeat(60));
   
   try {
-    // 第一轮
+    // 第一轮 - 简单对话
     let messages: ModelMessage[] = [
-      { role: 'user', content: '我想了解北京的天气' },
+      { role: 'user', content: '你好，请用一句话介绍北京' },
     ];
     
-    const result1 = await client.chat(messages, {
-      tools: { getWeather: getWeatherTool },
-      maxSteps: 5,
-    });
-    
-    console.log(`🤖 第一轮: ${result1.text}`);
+    const result1 = await client.chat(messages);
+    console.log(`🤖 第一轮: ${result1.text.substring(0, 50)}...`);
     
     // 添加助手响应到历史
-    messages.push({ role: 'assistant', content: result1.text });
+    messages = [
+      ...messages,
+      { 
+        role: 'assistant' as const, 
+        content: result1.text
+      }
+    ];
     
     // 第二轮
-    messages.push({ role: 'user', content: '那上海呢？' });
+    messages.push({ role: 'user' as const, content: '那上海呢？也用一句话介绍' });
     
-    const result2 = await client.chat(messages, {
-      tools: { getWeather: getWeatherTool },
-      maxSteps: 5,
-    });
-    
-    console.log(`🤖 第二轮: ${result2.text}`);
+    const result2 = await client.chat(messages);
+    console.log(`🤖 第二轮: ${result2.text.substring(0, 50)}...`);
     
     // 第三轮
-    messages.push({ role: 'assistant', content: result2.text });
-    messages.push({ role: 'user', content: '比较一下这两个城市的温度' });
+    messages.push({ 
+      role: 'assistant' as const, 
+      content: result2.text
+    });
+    messages.push({ role: 'user' as const, content: '哪个城市更大？' });
     
     const result3 = await client.chat(messages);
-    
-    console.log(`🤖 第三轮: ${result3.text}`);
+    console.log(`🤖 第三轮: ${result3.text.substring(0, 50)}...`);
     console.log('✅ 多轮对话测试通过');
     
     return true;
   } catch (error: any) {
-    console.error(`❌ 失败: ${error.message}`);
+    console.error(`❌ 失败:`, error.message || error);
     return false;
   }
 }

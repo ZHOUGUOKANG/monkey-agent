@@ -5,8 +5,10 @@ import type { WorkflowExecutionContext } from './types';
 /**
  * 创建上下文工具集
  * 提供 valSet 和 valGet 功能，让 Agent 可以在共享上下文中存储和读取变量
+ * 
+ * @param _context - 工作流上下文（工具定义时不需要，执行时才使用）
  */
-export function createContextTools(context: WorkflowExecutionContext) {
+export function createContextTools(_context: WorkflowExecutionContext) {
   return {
     /**
      * 设置共享变量
@@ -22,7 +24,7 @@ Examples:
 - valSet({ key: "filePath", value: "/path/to/output.csv" })
 
 The value can be any JSON-serializable data: string, number, boolean, object, or array.`,
-      parameters: z.object({
+      inputSchema: z.object({
         key: z.string().min(1).describe('Variable name/key'),
         value: z.any().describe('Value to store (any JSON-serializable data)'),
       }),
@@ -42,7 +44,7 @@ Examples:
 - valGet({ key: "productData" })
 - valGet({ key: "analysisResult" })
 - valGet({ key: "filePath" })`,
-      parameters: z.object({
+      inputSchema: z.object({
         key: z.string().min(1).describe('Variable name/key to retrieve'),
       }),
     }),
@@ -56,7 +58,7 @@ Examples:
 
 Use this to discover what data is available from previous agents.
 Returns an array of key names.`,
-      parameters: z.object({}),
+      inputSchema: z.object({}),
     }),
   };
 }

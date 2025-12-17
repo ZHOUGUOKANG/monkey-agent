@@ -17,9 +17,32 @@ export interface RoundBoundaryResult {
 }
 
 /**
+ * 消息边界查找器配置
+ */
+export interface MessageBoundaryFinderConfig {
+  /** 是否启用缓存（默认 true） */
+  enableCache?: boolean;
+  /** 缓存最大条目数（默认 100） */
+  maxCacheSize?: number;
+}
+
+/**
  * 消息边界查找器
  */
 export class MessageBoundaryFinder {
+  private config: Required<MessageBoundaryFinderConfig>;
+  private roundBoundaryCache: Map<string, RoundBoundaryResult>;
+  private messageBoundaryCache: Map<string, number>;
+
+  constructor(config: MessageBoundaryFinderConfig = {}) {
+    this.config = {
+      enableCache: config.enableCache ?? true,
+      maxCacheSize: config.maxCacheSize ?? 100,
+    };
+    this.roundBoundaryCache = new Map();
+    this.messageBoundaryCache = new Map();
+  }
+
   /**
    * 查找基于轮次的边界
    * 
@@ -30,6 +53,20 @@ export class MessageBoundaryFinder {
    * @returns 边界查找结果
    */
   findRoundBoundary(history: ModelMessage[], keepRounds: number): RoundBoundaryResult {
+    // 检查缓存
+    if (this.config.enableCache) {
+      const cacheKey = this.getRoundBoundaryCacheKey(history.length, keepRounds);
+      const cached = this.roundBoundaryCache.get(cacheKey);
+      if (cached !== undefined) {
+        return cached;
+      }
+    }
+    
+    // 快速路径：如果历史为空或 keepRounds <= 0
+    if (history.length === 0 || keepRounds <= 0) {
+      return { index: 0, roundCount: 0 };
+    }
+    
     let keepStartIndex = 0;
     let roundCount = 0;
     
@@ -48,10 +85,20 @@ export class MessageBoundaryFinder {
       }
     }
     
-    // 如果整个历史的轮次数 < keepRounds，keepStartIndex 保持为 0
-    // 这意味着所有消息都需要保留（没有足够的消息可以压缩）
+    // 快速路径：如果整个历史的轮次数 < keepRounds
+    if (roundCount < keepRounds) {
+      keepStartIndex = 0; // 保留所有消息
+    }
     
-    return { index: keepStartIndex, roundCount };
+    const result = { index: keepStartIndex, roundCount };
+    
+    // 更新缓存
+    if (this.config.enableCache) {
+      const cacheKey = this.getRoundBoundaryCacheKey(history.length, keepRounds);
+      this.updateRoundBoundaryCache(cacheKey, result);
+    }
+    
+    return result;
   }
 
   /**
@@ -92,27 +139,28 @@ export class MessageBoundaryFinder {
    * @param history 对话历史
    * @param keepMessages 要保留的消息数
    * @returns 保留消息的起始索引
-   * 
-   * @example
-   * ```
-   * // 场景：希望保留最后 2 条消息
-   * history = [
-   *   user,                      // index 0  ← 安全截断点
-   *   assistant(toolCall),       // index 1
-   *   tool(result),              // index 2
-   * ]
-   * targetIndex = 3 - 2 = 1
-   * 扫描从 index 1 开始：
-   *   - index 1: assistant(toolCall) → 跳过
-   *   - index 2: tool → 这是最后一条，需要向前找配对的 assistant
-   * 最终返回 index 1（保留 assistant+tool 配对）
-   * ```
    */
   findMessageBoundary(history: ModelMessage[], keepMessages: number): number {
+    // 检查缓存
+    if (this.config.enableCache) {
+      const cacheKey = this.getMessageBoundaryCacheKey(history.length, keepMessages);
+      const cached = this.messageBoundaryCache.get(cacheKey);
+      if (cached !== undefined) {
+        return cached;
+      }
+    }
+    
     const targetIndex = Math.max(0, history.length - keepMessages);
+    
+    // 快速路径：如果 targetIndex 为 0，直接返回
+    if (targetIndex === 0) {
+      return 0;
+    }
     
     // 构建工具调用索引（O(n)）
     const toolCallIndex = this.buildToolCallIndex(history);
+    
+    let result = targetIndex;
     
     // 从目标位置开始向后扫描，找到第一个安全的截断点
     for (let i = targetIndex; i < history.length; i++) {
@@ -120,7 +168,8 @@ export class MessageBoundaryFinder {
       
       // 安全点 1: user 消息（对话轮次的开始）
       if (msg.role === 'user') {
-        return i;
+        result = i;
+        break;
       }
       
       // 安全点 2: 不包含 tool-call 的 assistant 消息
@@ -130,7 +179,8 @@ export class MessageBoundaryFinder {
         
         if (!hasToolCall) {
           // 纯文本 assistant 消息是安全的截断点
-          return i;
+          result = i;
+          break;
         }
         // 如果包含 tool-call，需要确保后续的 tool 消息也被保留
         // 继续扫描，不能在这里截断
@@ -155,24 +205,107 @@ export class MessageBoundaryFinder {
           const assistantIndex = toolCallIndex.get(toolCallId)!;
           
           // 从配对的 assistant 开始保留（保持完整的 tool-call + tool-result 对）
-          return assistantIndex;
+          result = assistantIndex;
+          break;
         }
         
         // 如果找不到配对的 assistant（孤立的 tool 消息，不应该发生）
         // 从 tool 本身开始保留
-        return i;
+        result = i;
+        break;
       }
     }
     
-    // 整个扫描范围都没有找到安全点
-    // 保守策略：从 targetIndex 开始保留所有消息
-    return targetIndex;
+    // 更新缓存
+    if (this.config.enableCache) {
+      const cacheKey = this.getMessageBoundaryCacheKey(history.length, keepMessages);
+      this.updateMessageBoundaryCache(cacheKey, result);
+    }
+    
+    return result;
+  }
+
+  /**
+   * 清除所有缓存
+   */
+  clearCache(): void {
+    this.roundBoundaryCache.clear();
+    this.messageBoundaryCache.clear();
+  }
+
+  /**
+   * 获取缓存统计
+   */
+  getCacheStats(): {
+    roundBoundary: { size: number; maxSize: number };
+    messageBoundary: { size: number; maxSize: number };
+  } {
+    return {
+      roundBoundary: {
+        size: this.roundBoundaryCache.size,
+        maxSize: this.config.maxCacheSize,
+      },
+      messageBoundary: {
+        size: this.messageBoundaryCache.size,
+        maxSize: this.config.maxCacheSize,
+      },
+    };
+  }
+
+  /**
+   * 生成轮次边界缓存键
+   */
+  private getRoundBoundaryCacheKey(historyLength: number, keepRounds: number): string {
+    return `round:${historyLength}:${keepRounds}`;
+  }
+
+  /**
+   * 生成消息边界缓存键
+   */
+  private getMessageBoundaryCacheKey(historyLength: number, keepMessages: number): string {
+    return `message:${historyLength}:${keepMessages}`;
+  }
+
+  /**
+   * 更新轮次边界缓存（LRU 策略）
+   */
+  private updateRoundBoundaryCache(key: string, value: RoundBoundaryResult): void {
+    if (this.roundBoundaryCache.has(key)) {
+      this.roundBoundaryCache.delete(key);
+    }
+    
+    if (this.roundBoundaryCache.size >= this.config.maxCacheSize) {
+      const firstKey = this.roundBoundaryCache.keys().next().value;
+      if (firstKey !== undefined) {
+        this.roundBoundaryCache.delete(firstKey);
+      }
+    }
+    
+    this.roundBoundaryCache.set(key, value);
+  }
+
+  /**
+   * 更新消息边界缓存（LRU 策略）
+   */
+  private updateMessageBoundaryCache(key: string, value: number): void {
+    if (this.messageBoundaryCache.has(key)) {
+      this.messageBoundaryCache.delete(key);
+    }
+    
+    if (this.messageBoundaryCache.size >= this.config.maxCacheSize) {
+      const firstKey = this.messageBoundaryCache.keys().next().value;
+      if (firstKey !== undefined) {
+        this.messageBoundaryCache.delete(firstKey);
+      }
+    }
+    
+    this.messageBoundaryCache.set(key, value);
   }
 }
 
 /**
  * 创建默认的消息边界查找器实例
  */
-export function createMessageBoundaryFinder(): MessageBoundaryFinder {
-  return new MessageBoundaryFinder();
+export function createMessageBoundaryFinder(config?: MessageBoundaryFinderConfig): MessageBoundaryFinder {
+  return new MessageBoundaryFinder(config);
 }
