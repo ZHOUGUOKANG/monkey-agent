@@ -11,6 +11,7 @@ import {
   isContextLengthError,
   shouldCompress,
   validateConfig,
+  InsufficientMessagesError,
 } from '../compression';
 
 /**
@@ -887,7 +888,11 @@ Do NOT just call tools and stop - always summarize the information and answer th
       const errorMsg = error instanceof Error ? error.message : 'Unknown error';
       
       // 如果是"消息不够"的错误，触发跳过事件
-      if (errorMsg.includes('Not enough')) {
+      if (
+        error instanceof InsufficientMessagesError ||
+        errorMsg.includes('Not enough') ||
+        errorMsg.includes('Cannot compress')
+      ) {
         this.emit('context:skip-compression', {
           reason: errorMsg,
           totalMessages: this.conversationHistory.length,

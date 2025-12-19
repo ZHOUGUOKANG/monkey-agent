@@ -30,22 +30,26 @@ export class MessageBoundaryFinder {
    * @returns 边界查找结果
    */
   findRoundBoundary(history: ModelMessage[], keepRounds: number): RoundBoundaryResult {
-    let keepStartIndex = history.length;
+    let keepStartIndex = 0;
     let roundCount = 0;
     
+    // 从后往前遍历，统计轮次
     for (let i = history.length - 1; i >= 0; i--) {
       const msg = history[i];
       
       // 当遇到 user 消息时，标志着一个新轮次的开始
       if (msg.role === 'user') {
         roundCount++;
-        if (roundCount > keepRounds) {
-          // 找到了要保留的轮次的起点
-          keepStartIndex = i + 1; // 从下一条消息开始保留
-          break;
+        if (roundCount === keepRounds && keepStartIndex === 0) {
+          // 找到了要保留的轮次的起点（从后往前数第 keepRounds 个 user 消息）
+          keepStartIndex = i; // 从这个 user 消息开始保留
+          // 继续遍历以统计总轮数，不提前 break
         }
       }
     }
+    
+    // 如果整个历史的轮次数 < keepRounds，keepStartIndex 保持为 0
+    // 这意味着所有消息都需要保留（没有足够的消息可以压缩）
     
     return { index: keepStartIndex, roundCount };
   }

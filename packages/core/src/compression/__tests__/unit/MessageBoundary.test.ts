@@ -42,8 +42,8 @@ describe('MessageBoundaryFinder', () => {
 
       const result = finder.findRoundBoundary(history, 5);
       
-      // 只有1轮，但要保留5轮，所以不会截断，index 保持为 history.length
-      expect(result.index).toBe(2); // 保留所有消息
+      // 只有1轮，但要保留5轮，所以不会截断，index 应为 0（保留所有消息）
+      expect(result.index).toBe(0); // 从 index 0 开始保留（保留所有消息）
       expect(result.roundCount).toBe(1);
     });
 
@@ -54,8 +54,8 @@ describe('MessageBoundaryFinder', () => {
 
       const result = finder.findRoundBoundary(history, 1);
       
-      // 只有1轮，保留1轮，所以保留所有消息
-      expect(result.index).toBe(1); // 从 index 1 开始保留（但只有1条消息，实际不会截断）
+      // 只有1轮，保留1轮，所以保留所有消息（index 为 0）
+      expect(result.index).toBe(0); // 从 index 0 开始保留（保留所有消息）
       expect(result.roundCount).toBe(1);
     });
   });

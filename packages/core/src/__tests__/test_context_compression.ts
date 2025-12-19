@@ -338,7 +338,7 @@ async function testDisabledCompression() {
       model,
       maxTokens: 2000,
     },
-    maxIterations: 30, // 增加最大迭代次数
+    maxIterations: 30,
     contextCompression: {
       enabled: false, // 禁用压缩
     },
@@ -348,25 +348,40 @@ async function testDisabledCompression() {
   agent.on('context:compressed', () => {
     compressionTriggered = true;
   });
+  
+  // 监听错误事件以便调试
+  agent.on('react:error', (data: any) => {
+    console.log(`\n⚠️  执行错误: ${data.error}`);
+    console.log(`   详情: ${JSON.stringify(data.details || {})}`);
+  });
 
   const task: Task = {
     id: 'task-4',
     type: 'disabled-test',
-    description: '增加计数器 3 次，然后告诉我结果',
+    description: '增加计数器 3 次（每次增加 1），然后告诉我最终的计数器值',
     parameters: {},
   };
 
-  const result = await agent.execute(task);
+  try {
+    const result = await agent.execute(task);
 
-  console.log('\n📊 测试结果:');
-  console.log(`成功: ${result.success}`);
-  console.log(`压缩触发: ${compressionTriggered ? '是（不应该）' : '否（正确）'}`);
-  
-  if (!result.success && result.error) {
-    console.log(`错误: ${result.error.message}`);
+    console.log('\n📊 测试结果:');
+    console.log(`成功: ${result.success}`);
+    console.log(`答案: ${result.data?.answer || '(无)'}`);
+    console.log(`压缩触发: ${compressionTriggered ? '是（不应该）' : '否（正确）'}`);
+    
+    if (!result.success && result.error) {
+      console.log(`错误: ${result.error.message}`);
+      console.log(`错误栈: ${result.error.stack}`);
+    }
+
+    // 只要任务成功且未触发压缩就算通过
+    return { success: result.success && !compressionTriggered };
+  } catch (error: any) {
+    console.log(`\n❌ 测试异常: ${error.message}`);
+    console.log(`   错误栈: ${error.stack}`);
+    return { success: false, error: error.message };
   }
-
-  return { success: result.success && !compressionTriggered };
 }
 
 // ============================================
@@ -502,8 +517,9 @@ async function testCompressionQuality() {
     maxIterations: 30,
     contextCompression: {
       enabled: true,
-      maxMessages: 8, // 降低阈值以便更容易触发（从 10 改为 8）
-      keepRecentMessages: 1, // 减少保留消息以确保有足够的消息可压缩（从 2 改为 1）
+      maxMessages: 6, // 进一步降低阈值确保触发（从 8 改为 6）
+      keepRecentMessages: 2, // 保留最近 2 条消息
+      keepRecentRounds: 1, // 保留最近 1 轮对话
       autoRetryOnLength: true,
       enableTool: false,
     },
@@ -512,6 +528,7 @@ async function testCompressionQuality() {
   // 记录压缩前的关键信息
   let summaryContent = '';
   let compressionTriggered = false;
+  let actualFinalValue = 0;
   
   agent.on('context:proactive-compression-triggered', (data: any) => {
     console.log(`\n⚡ 主动压缩触发！`);
@@ -541,25 +558,41 @@ async function testCompressionQuality() {
   const task: Task = {
     id: 'quality-test',
     type: 'quality-check',
-    description: `执行以下步骤（确保每个步骤都调用工具）：
-1. 增加计数器到 5（每次增加 1，共 5 次）
-2. 添加文本："重要数据：项目代号 Alpha-001"
-3. 添加文本："关键信息：目标值为 5"
-4. 添加文本："备注：这是质量测试的第三条记录"
-5. 继续增加计数器 3 次（每次增加 1）
-6. 最后获取计数器值并告诉我`,
+    description: `执行以下步骤（确保每个步骤都调用工具，按顺序执行）：
+1. 首先获取当前计数器值（应该是 0）
+2. 增加计数器 5 次（每次增加 1）
+3. 添加文本到历史："重要数据：项目代号 Alpha-001"
+4. 添加文本到历史："关键信息：当前计数器值为 5"
+5. 添加文本到历史："备注：这是质量测试的第三条记录"
+6. 最后获取计数器的最终值并告诉我
+
+注意：请确保最后告诉我计数器的确切值。`,
     parameters: {},
   };
   
   const result = await agent.execute(task);
   
+  // 从 agent 内部获取实际的计数器值
+  const counterValue = agent['counter'];
+  actualFinalValue = counterValue;
+  
+  console.log(`\n   实际计数器值: ${actualFinalValue}`);
+  
   // 验证压缩质量
   const checks = {
     compressionTriggered,
-    hasCounter: compressionTriggered && (summaryContent.toLowerCase().includes('计数器') || summaryContent.toLowerCase().includes('counter') || summaryContent.includes('increment')),
-    hasImportantData: compressionTriggered && (summaryContent.includes('Alpha-001') || summaryContent.includes('重要') || summaryContent.includes('项目')),
+    hasCounter: compressionTriggered && (
+      summaryContent.toLowerCase().includes('计数器') || 
+      summaryContent.toLowerCase().includes('counter') || 
+      summaryContent.includes('increment')
+    ),
+    hasImportantData: compressionTriggered && (
+      summaryContent.includes('Alpha-001') || 
+      summaryContent.includes('重要') || 
+      summaryContent.includes('项目')
+    ),
     taskCompleted: result.success,
-    correctFinalValue: result.success && (result.data?.answer?.includes('8') || result.data?.answer?.includes('八')),
+    correctFinalValue: actualFinalValue === 5, // 直接验证实际值
   };
   
   console.log('\n📊 质量检查结果:');
@@ -574,15 +607,16 @@ async function testCompressionQuality() {
   }
   
   console.log(`   ✓ 任务完成: ${checks.taskCompleted ? '✅' : '❌'}`);
-  console.log(`   ✓ 最终值正确: ${checks.correctFinalValue ? '✅ (8)' : '❌'}`);
+  console.log(`   ✓ 最终值正确: ${checks.correctFinalValue ? '✅ (5)' : `❌ (实际: ${actualFinalValue}, 预期: 5)`}`);
   
-  // 只要压缩触发了且任务完成，就算通过
+  // 压缩触发、任务完成且最终值正确才算通过
   const testPassed = checks.compressionTriggered && checks.taskCompleted && checks.correctFinalValue;
   
   return { 
     success: testPassed,
     checks,
     summary: summaryContent,
+    actualFinalValue,
   };
 }
 
