@@ -57,44 +57,41 @@ class MockOrchestrator {
     this.agents.set(agent.id, agent);
   }
 
-  getAvailableAgentTypes(): string[] {
-    return ['browser', 'crawler', 'code', 'file', 'image', 'shell', 'computer'];
-  }
-
-  getAllAgentInfo() {
+  getAgentsInfo() {
     return [
       {
-        type: 'browser',
+        id: 'browser-agent',
+        name: 'Browser Agent',
         description: 'Browser automation for web navigation and interaction',
         capabilities: ['navigate', 'click', 'type', 'extract', 'screenshot'],
       },
       {
-        type: 'crawler',
-        description: 'Web scraping for structured data extraction',
-        capabilities: ['extract-list', 'pagination', 'parse-html'],
-      },
-      {
-        type: 'code',
+        id: 'code-agent',
+        name: 'Code Agent',
         description: 'Code execution supporting Python, JavaScript, etc.',
         capabilities: ['execute-python', 'execute-js', 'analyze-data'],
       },
       {
-        type: 'file',
+        id: 'file-agent',
+        name: 'File Agent',
         description: 'File system operations',
         capabilities: ['read', 'write', 'search', 'organize'],
       },
       {
-        type: 'image',
+        id: 'image-agent',
+        name: 'Image Agent',
         description: 'Image processing and generation',
         capabilities: ['generate', 'edit', 'analyze', 'convert'],
       },
       {
-        type: 'shell',
+        id: 'shell-agent',
+        name: 'Shell Agent',
         description: 'Shell command execution',
         capabilities: ['execute', 'pipe', 'background'],
       },
       {
-        type: 'computer',
+        id: 'computer-agent',
+        name: 'Computer Agent',
         description: 'Computer control (mouse, keyboard, screen)',
         capabilities: ['click', 'type', 'screenshot', 'move-mouse'],
       },
@@ -281,9 +278,9 @@ const testCases = [
   },
   {
     id: 2,
-    name: '意图识别 - 单一任务',
+    name: '意图识别 - 单一任务（单节点工作流）',
     task: '帮我爬取 https://example.com 网站首页的所有标题',
-    expectedIntent: IntentType.SINGLE_TASK,
+    expectedIntent: IntentType.COMPLEX_WORKFLOW,
     expectedMultiAgent: false,
   },
   {

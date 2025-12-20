@@ -1,224 +1,244 @@
-import { BaseAgent, BaseAgentConfig } from '@monkey-agent/base';
-import type { ToolSet } from 'ai';
+import { BaseAgent } from '@monkey-agent/base';
 import { tool } from 'ai';
 import { z } from 'zod';
+import type { Browser, Page } from 'playwright';
+import type { ILLMClient } from '@monkey-agent/types';
 
 /**
- * 浏览器 Agent 配置
+ * Browser Agent 配置
  */
-export interface BrowserAgentConfig extends Partial<BaseAgentConfig> {
-  /**
-   * 默认操作的标签页 ID
-   * 如果未指定，将使用当前活动标签页
-   */
-  defaultTabId?: number;
-
-  /**
-   * 是否总是使用活动标签页（忽略 defaultTabId）
-   */
-  alwaysUseActiveTab?: boolean;
+export interface BrowserAgentConfig {
+  llmClient: ILLMClient;
+  browser: Browser;
+  page: Page;
+  id?: string;
+  name?: string;
+  description?: string;
 }
 
 /**
- * 浏览器 Agent
+ * Browser Agent
+ * 
+ * 使用 Playwright API 操作浏览器，替代 Chrome Extension APIs
  * 
  * 核心能力：
- * - 页面导航和历史控制
- * - DOM 元素操作（点击、输入、滚动）
- * - 内容提取和截图
- * - 表单填写和提交
- * 
- * 执行环境：Chrome Extension (Content Script + Background)
+ * - 页面导航
+ * - 元素操作（点击、填写）
+ * - 内容提取
+ * - 截图
+ * - 等待元素
  */
 export class BrowserAgent extends BaseAgent {
-  private defaultTabId?: number;
-  private alwaysUseActiveTab: boolean;
+  private page: Page;
 
-  constructor(config?: BrowserAgentConfig) {
+  constructor(config: BrowserAgentConfig) {
     super({
-      id: config?.id || 'browser-agent',
-      name: config?.name || 'Browser Agent',
-      description: config?.description || '浏览器自动化 Agent，负责页面导航、DOM 操作和内容提取',
-      capabilities: config?.capabilities || [
-        'navigate',
-        'click',
-        'type',
-        'scroll',
-        'screenshot',
-        'extract-content',
-        'fill-form',
-        'wait-for-element',
-        'tab-management',
-      ],
-      llmClient: config?.llmClient,
-      llmConfig: config?.llmConfig,
-      systemPrompt: config?.systemPrompt,
-      maxIterations: config?.maxIterations,
-      enableReflection: config?.enableReflection,
-      contextCompression: config?.contextCompression,
+      id: config.id || 'browser-agent',
+      name: config.name || 'Browser Agent',
+      description: config.description || 'Playwright 浏览器自动化 Agent，负责页面导航、元素操作和内容提取',
+      capabilities: ['navigate', 'click', 'fill', 'screenshot', 'extract', 'wait'],
+      llmClient: config.llmClient,
+      maxIterations: 30, // 增加迭代次数，确保有足够时间调用 valSet
+      systemPrompt: `You are a browser automation expert using Playwright.
+
+Best Practices:
+1. **Wait Strategy**: Always use waitForSelector before interacting with elements that may not be immediately available
+2. **Selector Strategy**: 
+   - Prefer specific selectors (id, data-testid, aria-labels)
+   - Use CSS selectors like: #id, .class, [data-testid="value"]
+   - Avoid overly complex selectors that may break easily
+3. **Navigation**: 
+   - After navigate, wait for the page to be fully loaded before proceeding
+   - Check the returned title to verify successful navigation
+4. **Error Handling**:
+   - If an element is not found, try getting the page summary first to understand the structure
+   - Consider that pages may have dynamic content or require scrolling
+5. **Data Extraction** (⚠️ IMPORTANT - Avoid Context Overflow):
+   - **PREFER getPageSummary**: Best for understanding page structure without overwhelming context
+   - **USE getPageText**: When you need content without HTML tags (much more efficient than getContent)
+   - **AVOID getContent**: Strongly discouraged! Always truncated to max 10000 chars. Use only when HTML structure is absolutely necessary.
+   - Use getText for specific element text content
+   - Use getAttribute for data attributes, href, src, etc.
+   - **CRITICAL**: getContent is ALWAYS truncated to 10000 chars maximum, regardless of input
+   - **WARNING**: Even with cleaning, HTML can be verbose. Always prefer getPageText or getPageSummary.
+6. **Screenshots**: Take screenshots when visual verification is needed or to help debug issues
+
+7. **⚠️ CRITICAL: Data Sharing in Workflows**:
+   When working in a workflow with other agents:
+   - **IMMEDIATELY after extracting data, call valSet to store it** - This should be your NEXT step after extraction
+   - **DON'T wait** - Store data as soon as you have it, before doing anything else
+   - Use descriptive variable names: "userInfo", "salesData", "searchResults", etc.
+   - **MUST mention the variable name in your summary**: e.g., "Extracted user data and stored as 'userInfo'"
+   - This allows downstream agents (like ReportAgent) to access your data
+   - Example workflow:
+     * Step 1: Extract data (navigate, getText, etc.)
+     * Step 2: **IMMEDIATELY call valSet** → \`valSet({ key: 'productList', value: products })\`
+     * Step 3: Return summary mentioning "stored as 'productList'"
+   
+   **TIMING IS CRITICAL**: Store data early in your execution, not at the end. 
+   If you hit max iterations before calling valSet, downstream agents won't have the data!
+
+Content Extraction Strategy:
+- For understanding what's on the page → use getPageSummary (BEST)
+- For reading text content → use getPageText (RECOMMENDED)
+- For extracting specific data → use getText with selectors (EFFICIENT)
+- For analyzing HTML structure → use getContent with cleanHtml=true (LAST RESORT, max 10K chars)
+- **NEVER** use getContent without a specific reason - it's always truncated and inefficient
+
+Common Workflows:
+- Login: navigate → waitForSelector → fill username → fill password → click submit → waitForSelector (success indicator)
+- Data Scraping: navigate → getPageSummary → getText/getAttribute → **IMMEDIATELY valSet** → return summary
+- Form Filling: waitForSelector → fill fields → click submit → verify success
+- Content Analysis: navigate → getPageText/getPageSummary → **valSet to store** → return
+
+Remember: 
+- Modern web pages are dynamic. Always wait for elements before interacting with them. 
+- ALWAYS prefer efficient content extraction tools to avoid context overflow. 
+- getContent is ALWAYS limited to 10000 chars - use it only as last resort.
+- **IN WORKFLOWS: Extract data → valSet IMMEDIATELY → then continue with other tasks**`,
     });
     
-    this.defaultTabId = config?.defaultTabId;
-    this.alwaysUseActiveTab = config?.alwaysUseActiveTab ?? false;
+    this.page = config.page;
   }
 
   /**
-   * 构建系统提示词
+   * 清理 HTML 内容，移除脚本、样式等无用标签
+   * 更激进的清理策略，只保留有用的文本内容
    */
-  protected buildSystemPrompt(): string {
-    return `You are Browser Agent, an intelligent web browser automation assistant.
-
-Your capabilities:
-- Navigate web pages and control browser history
-- Find and interact with DOM elements (click, type, scroll)
-- Extract content and take screenshots
-- Fill forms and submit data
-- Wait for elements to appear or conditions to be met
-- Manage multiple tabs (create, close, switch, list)
-
-When automating browser tasks:
-1. Always verify element existence before interacting
-2. Use appropriate selectors (CSS, XPath) for reliability
-3. Wait for dynamic content to load when needed
-4. Extract relevant information efficiently
-5. Handle errors gracefully and provide clear feedback
-6. Use tabId parameter to target specific tabs when working with multiple tabs
-
-Available tools will help you interact with the browser. Use them step by step to accomplish user tasks.
-Always provide clear explanations of what you're doing and what results you observe.`;
+  private cleanHtmlContent(html: string): string {
+    return html
+      // 移除 script 标签及其内容
+      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+      // 移除 style 标签及其内容
+      .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+      // 移除 SVG 标签及其内容（通常很大且不包含有用文本）
+      .replace(/<svg\b[^<]*(?:(?!<\/svg>)<[^<]*)*<\/svg>/gi, '')
+      // 移除注释
+      .replace(/<!--[\s\S]*?-->/g, '')
+      // 移除 head 标签及其内容（meta、link 等）
+      .replace(/<head\b[^<]*(?:(?!<\/head>)<[^<]*)*<\/head>/gi, '')
+      // 移除常见的无用标签
+      .replace(/<(noscript|iframe|object|embed|applet|link|meta)\b[^<]*(?:(?!<\/\1>)<[^<]*)*<\/\1>/gi, '')
+      .replace(/<(link|meta|base|noscript|iframe)[^>]*>/gi, '')
+      // 移除 data 属性（通常很长）
+      .replace(/\s+data-[a-z-]+="[^"]*"/gi, '')
+      // 移除 class 属性（通常很长，特别是 Tailwind）
+      .replace(/\s+class="[^"]*"/gi, '')
+      // 移除 style 属性
+      .replace(/\s+style="[^"]*"/gi, '')
+      // 移除 id 属性（保留语义标签即可）
+      .replace(/\s+id="[^"]*"/gi, '')
+      // 移除 aria 和 role 属性
+      .replace(/\s+(aria-[a-z-]+|role)="[^"]*"/gi, '')
+      // 移除多余的空白
+      .replace(/\s+/g, ' ')
+      .replace(/>\s+</g, '><')
+      .trim();
   }
 
   /**
-   * 定义浏览器操作工具
+   * 截断内容并添加提示信息
+   * 强制限制最大长度为 10000 字符
    */
-  protected getToolDefinitions(): ToolSet {
+  private truncateContent(content: string, maxLength: number): { content: string; truncated: boolean; originalLength: number } {
+    const originalLength = content.length;
+    // 强制最大长度不超过 10000
+    const effectiveMaxLength = Math.min(maxLength, 10000);
+    
+    if (originalLength <= effectiveMaxLength) {
+      return { content, truncated: false, originalLength };
+    }
+    
+    const truncated = content.substring(0, effectiveMaxLength);
+    return {
+      content: truncated + '\n\n[Content truncated to prevent context overflow. Original: ' + originalLength + ' chars, Returned: ' + effectiveMaxLength + ' chars. Consider using getPageText or getPageSummary instead.]',
+      truncated: true,
+      originalLength
+    };
+  }
+
+  /**
+   * 定义工具
+   */
+  public getToolDefinitions() {
     return {
       navigate: tool({
-        description: 'Navigate to a URL in a tab',
-        inputSchema: z.object({
-          url: z.string().describe('The URL to navigate to'),
-          tabId: z.number().optional().describe('Tab ID to navigate (defaults to current active tab)'),
+        description: 'Navigate to a URL',
+        inputSchema: z.object({ 
+          url: z.string().describe('The URL to navigate to') 
         }),
       }),
-
+      
       click: tool({
-        description: 'Click an element on the page',
-        inputSchema: z.object({
-          selector: z.string().describe('CSS selector or XPath for the element'),
-          waitForElement: z.boolean().optional().describe('Wait for element to appear if not immediately found'),
-          tabId: z.number().optional().describe('Tab ID to execute in (defaults to current active tab)'),
+        description: 'Click an element by CSS selector',
+        inputSchema: z.object({ 
+          selector: z.string().describe('CSS selector of the element to click') 
         }),
       }),
-
-      typeText: tool({
-        description: 'Type text into an input element',
+      
+      fill: tool({
+        description: 'Fill an input field',
         inputSchema: z.object({
-          selector: z.string().describe('CSS selector for the input element'),
-          text: z.string().describe('Text to type'),
-          clear: z.boolean().optional().describe('Clear existing text before typing'),
-          tabId: z.number().optional().describe('Tab ID to execute in (defaults to current active tab)'),
+          selector: z.string().describe('CSS selector of the input field'),
+          value: z.string().describe('Value to fill in the field'),
         }),
       }),
-
-      scroll: tool({
-        description: 'Scroll the page or an element',
-        inputSchema: z.object({
-          direction: z.enum(['up', 'down', 'top', 'bottom']).describe('Scroll direction'),
-          selector: z.string().optional().describe('CSS selector for element to scroll (defaults to page)'),
-          amount: z.number().optional().describe('Scroll amount in pixels (for up/down)'),
-          tabId: z.number().optional().describe('Tab ID to execute in (defaults to current active tab)'),
-        }),
-      }),
-
-      getContent: tool({
-        description: 'Extract text content from the page or an element',
-        inputSchema: z.object({
-          selector: z.string().optional().describe('CSS selector for element (defaults to body)'),
-          includeHtml: z.boolean().optional().describe('Include HTML markup in addition to text'),
-          tabId: z.number().optional().describe('Tab ID to extract from (defaults to current active tab)'),
-        }),
-      }),
-
-      screenshot: tool({
-        description: 'Take a screenshot of a tab',
-        inputSchema: z.object({
-          fullPage: z.boolean().optional().describe('Capture full page or just visible area'),
-          tabId: z.number().optional().describe('Tab ID to capture (defaults to current active tab)'),
-        }),
-      }),
-
-      waitForElement: tool({
+      
+      waitForSelector: tool({
         description: 'Wait for an element to appear on the page',
         inputSchema: z.object({
-          selector: z.string().describe('CSS selector for the element'),
-          timeout: z.number().optional().describe('Maximum wait time in milliseconds (default: 5000)'),
-          tabId: z.number().optional().describe('Tab ID to wait in (defaults to current active tab)'),
+          selector: z.string().describe('CSS selector to wait for'),
+          timeout: z.number().optional().describe('Timeout in milliseconds (default: 5000)'),
         }),
       }),
-
-      back: tool({
-        description: 'Go back in browser history',
+      
+      getContent: tool({
+        description: 'Get the HTML content of the current page. ⚠️ STRONGLY DISCOURAGED - use getPageText or getPageSummary instead. Always truncated to max 10000 chars.',
         inputSchema: z.object({
-          tabId: z.number().optional().describe('Tab ID to go back in (defaults to current active tab)'),
+          maxLength: z.number().optional().describe('Maximum length of content to return (max: 10000 characters, default: 5000).'),
+          cleanHtml: z.boolean().optional().describe('Remove scripts, styles, SVG, and unnecessary attributes (default: true, RECOMMENDED)'),
         }),
       }),
-
-      forward: tool({
-        description: 'Go forward in browser history',
+      
+      getPageText: tool({
+        description: 'Get only the visible text content of the page (without HTML tags). Much more efficient than getContent for understanding page content.',
         inputSchema: z.object({
-          tabId: z.number().optional().describe('Tab ID to go forward in (defaults to current active tab)'),
+          maxLength: z.number().optional().describe('Maximum length of text to return (default: 30000 characters)'),
         }),
       }),
-
-      reload: tool({
-        description: 'Reload a tab',
-        inputSchema: z.object({
-          hard: z.boolean().optional().describe('Perform hard reload (bypass cache)'),
-          tabId: z.number().optional().describe('Tab ID to reload (defaults to current active tab)'),
-        }),
-      }),
-
-      executeScript: tool({
-        description: 'Execute JavaScript code on the page (use with caution)',
-        inputSchema: z.object({
-          code: z.string().describe('JavaScript code to execute'),
-          tabId: z.number().optional().describe('Tab ID to execute in (defaults to current active tab)'),
-        }),
-      }),
-
-      // 标签页管理工具
-      createTab: tool({
-        description: 'Create a new tab',
-        inputSchema: z.object({
-          url: z.string().optional().describe('URL to open in the new tab'),
-          active: z.boolean().optional().describe('Whether to activate the new tab (default: true)'),
-        }),
-      }),
-
-      closeTab: tool({
-        description: 'Close a tab',
-        inputSchema: z.object({
-          tabId: z.number().describe('Tab ID to close'),
-        }),
-      }),
-
-      switchTab: tool({
-        description: 'Switch to a specific tab',
-        inputSchema: z.object({
-          tabId: z.number().describe('Tab ID to switch to'),
-        }),
-      }),
-
-      listTabs: tool({
-        description: 'List all open tabs',
-        inputSchema: z.object({
-          currentWindowOnly: z.boolean().optional().describe('Only list tabs in current window (default: true)'),
-        }),
-      }),
-
-      getActiveTab: tool({
-        description: 'Get the currently active tab',
+      
+      getPageSummary: tool({
+        description: 'Get a structured summary of the page including title, meta info, and main content sections. Best for understanding page structure without overwhelming context.',
         inputSchema: z.object({}),
+      }),
+      
+      getText: tool({
+        description: 'Get text content of an element',
+        inputSchema: z.object({
+          selector: z.string().describe('CSS selector of the element'),
+        }),
+      }),
+      
+      getAttribute: tool({
+        description: 'Get an attribute value of an element',
+        inputSchema: z.object({
+          selector: z.string().describe('CSS selector of the element'),
+          attribute: z.string().describe('Name of the attribute'),
+        }),
+      }),
+      
+      screenshot: tool({
+        description: 'Take a screenshot of the page',
+        inputSchema: z.object({
+          fullPage: z.boolean().optional().describe('Take full page screenshot (default: false)'),
+        }),
+      }),
+      
+      evaluate: tool({
+        description: 'Execute JavaScript in the page context',
+        inputSchema: z.object({
+          script: z.string().describe('JavaScript code to execute'),
+        }),
       }),
     };
   }
@@ -226,666 +246,203 @@ Always provide clear explanations of what you're doing and what results you obse
   /**
    * 执行工具调用
    */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   protected async executeToolCall(toolName: string, input: any): Promise<any> {
-    switch (toolName) {
-      case 'navigate':
-        return await this.navigate(input.url, input.tabId);
-
-      case 'click':
-        return await this.clickElement(input.selector, input.waitForElement, input.tabId);
-
-      case 'typeText':
-        return await this.typeText(input.selector, input.text, input.clear, input.tabId);
-
-      case 'scroll':
-        return await this.scrollPage(input.direction, input.selector, input.amount, input.tabId);
-
-      case 'getContent':
-        return await this.extractContent(input.selector, input.includeHtml, input.tabId);
-
-      case 'screenshot':
-        return await this.takeScreenshot(input.fullPage, input.tabId);
-
-      case 'waitForElement':
-        return await this.waitForElement(input.selector, input.timeout, input.tabId);
-
-      case 'back':
-        return await this.goBack(input.tabId);
-
-      case 'forward':
-        return await this.goForward(input.tabId);
-
-      case 'reload':
-        return await this.reloadPage(input.hard, input.tabId);
-
-      case 'executeScript':
-        return await this.runScript(input.code, input.tabId);
-
-      // 标签页管理
-      case 'createTab':
-        return await this.createTab(input.url, input.active);
-
-      case 'closeTab':
-        return await this.closeTab(input.tabId);
-
-      case 'switchTab':
-        return await this.switchTab(input.tabId);
-
-      case 'listTabs':
-        return await this.listTabs(input.currentWindowOnly);
-
-      case 'getActiveTab':
-        return await this.getActiveTab();
-
-      default:
-        throw new Error(`Unknown tool: ${toolName}`);
-    }
-  }
-
-  // ============ 辅助方法 ============
-
-  /**
-   * 获取目标标签页 ID
-   * 优先级：指定的 tabId > 配置的 defaultTabId > 当前活动标签页
-   */
-  private async getTargetTabId(specifiedTabId?: number): Promise<number> {
-    // 如果指定了 tabId，直接使用
-    if (specifiedTabId !== undefined) {
-      return specifiedTabId;
-    }
-
-    // 如果配置了总是使用活动标签页，获取活动标签页
-    if (this.alwaysUseActiveTab) {
-      if (typeof chrome !== 'undefined' && chrome.tabs) {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (tab.id) return tab.id;
-      }
-    }
-
-    // 如果配置了默认 tabId，使用它
-    if (this.defaultTabId !== undefined) {
-      return this.defaultTabId;
-    }
-
-    // fallback 到当前活动标签页
-    if (typeof chrome !== 'undefined' && chrome.tabs) {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tab.id) return tab.id;
-    }
-
-    throw new Error('Unable to determine target tab ID');
-  }
-
-  /**
-   * 在指定标签页中执行脚本
-   */
-  private async executeScriptInTab<T>(
-    tabId: number,
-    func: (...args: any[]) => T,
-    args: any[] = []
-  ): Promise<T> {
-    if (typeof chrome !== 'undefined' && chrome.scripting) {
-      const results = await chrome.scripting.executeScript({
-        target: { tabId },
-        func,
-        args,
-      });
-      
-      if (results && results[0]) {
-        if (results[0].result !== undefined) {
-          return results[0].result as T;
-        }
-      }
-      
-      throw new Error('Script execution failed: no result returned');
-    }
-
-    throw new Error('Chrome scripting API not available');
-  }
-
-  // ============ 工具实现方法 ============
-
-  /**
-   * 导航到指定 URL
-   */
-  private async navigate(url: string, tabId?: number): Promise<any> {
-    this.emit('navigate:start', { url, tabId });
-
-    // 在浏览器环境中实现（当前页面）
-    if (typeof window !== 'undefined' && !tabId) {
-      window.location.href = url;
-      return { success: true, url };
-    }
-
-    // 在扩展环境中通过 chrome API
-    if (typeof chrome !== 'undefined' && chrome.tabs) {
-      const targetTabId = await this.getTargetTabId(tabId);
-      await chrome.tabs.update(targetTabId, { url });
-      return { success: true, url, tabId: targetTabId };
-    }
-
-    throw new Error('Unable to navigate: not in browser or extension context');
-  }
-
-  /**
-   * 点击元素
-   */
-  private async clickElement(selector: string, waitForElement?: boolean, tabId?: number): Promise<any> {
-    this.emit('click:start', { selector, tabId });
-
-    // 在当前页面执行（content script 环境）
-    if (typeof document !== 'undefined' && !tabId) {
-      let element = document.querySelector(selector);
-
-      // 如果需要等待元素出现
-      if (!element && waitForElement) {
-        await this.waitForElement(selector);
-        element = document.querySelector(selector);
-      }
-
-      if (!element) {
-        throw new Error(`Element not found: ${selector}`);
-      }
-
-      (element as HTMLElement).click();
-      return { success: true, selector };
-    }
-
-    // 在指定标签页执行（extension 环境）
-    if (typeof chrome !== 'undefined' && chrome.scripting) {
-      const targetTabId = await this.getTargetTabId(tabId);
-      
-      return await this.executeScriptInTab(
-        targetTabId,
-        (sel: string, wait: boolean) => {
-          const element = document.querySelector(sel);
-          if (!element) {
-            throw new Error(`Element not found: ${sel}`);
-          }
-          (element as HTMLElement).click();
-          return { success: true, selector: sel };
-        },
-        [selector, waitForElement || false]
-      );
-    }
-
-    throw new Error('Document not available');
-  }
-
-  /**
-   * 输入文本
-   */
-  private async typeText(selector: string, text: string, clear?: boolean, tabId?: number): Promise<any> {
-    this.emit('type:start', { selector, text, tabId });
-
-    // 在当前页面执行（content script 环境）
-    if (typeof document !== 'undefined' && !tabId) {
-      const element = document.querySelector(selector);
-      if (!element) {
-        throw new Error(`Element not found: ${selector}`);
-      }
-
-      if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
-        if (clear) {
-          element.value = '';
-        }
-        element.value = text;
-        element.dispatchEvent(new Event('input', { bubbles: true }));
-        element.dispatchEvent(new Event('change', { bubbles: true }));
-        return { success: true, selector, text };
-      }
-
-      throw new Error('Element is not an input or textarea');
-    }
-
-    // 在指定标签页执行（extension 环境）
-    if (typeof chrome !== 'undefined' && chrome.scripting) {
-      const targetTabId = await this.getTargetTabId(tabId);
-      
-      return await this.executeScriptInTab(
-        targetTabId,
-        (sel: string, txt: string, clr: boolean) => {
-          const element = document.querySelector(sel);
-          if (!element) {
-            throw new Error(`Element not found: ${sel}`);
-          }
-
-          if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
-            if (clr) {
-              element.value = '';
-            }
-            element.value = txt;
-            element.dispatchEvent(new Event('input', { bubbles: true }));
-            element.dispatchEvent(new Event('change', { bubbles: true }));
-            return { success: true, selector: sel, text: txt };
-          }
-
-          throw new Error('Element is not an input or textarea');
-        },
-        [selector, text, clear || false]
-      );
-    }
-
-    throw new Error('Document not available');
-  }
-
-  /**
-   * 滚动页面或元素
-   */
-  private async scrollPage(
-    direction: 'up' | 'down' | 'top' | 'bottom',
-    selector?: string,
-    amount?: number,
-    tabId?: number
-  ): Promise<any> {
-    this.emit('scroll:start', { direction, selector, tabId });
-
-    // 在当前页面执行（content script 环境）
-    if (typeof window !== 'undefined' && !tabId) {
-      const target = selector ? document.querySelector(selector) : window;
-      if (!target) {
-        throw new Error(`Scroll target not found: ${selector}`);
-      }
-
-      switch (direction) {
-        case 'top':
-          target.scrollTo(0, 0);
-          break;
-        case 'bottom':
-          target.scrollTo(0, document.body.scrollHeight);
-          break;
-        case 'up':
-          target.scrollBy(0, -(amount || 300));
-          break;
-        case 'down':
-          target.scrollBy(0, amount || 300);
-          break;
-      }
-
-      return { success: true, direction, selector };
-    }
-
-    // 在指定标签页执行（extension 环境）
-    if (typeof chrome !== 'undefined' && chrome.scripting) {
-      const targetTabId = await this.getTargetTabId(tabId);
-      
-      return await this.executeScriptInTab(
-        targetTabId,
-        (dir: string, sel: string | undefined, amt: number | undefined) => {
-          const target = sel ? document.querySelector(sel) : window;
-          if (!target) {
-            throw new Error(`Scroll target not found: ${sel}`);
-          }
-
-          switch (dir) {
-            case 'top':
-              target.scrollTo(0, 0);
-              break;
-            case 'bottom':
-              target.scrollTo(0, document.body.scrollHeight);
-              break;
-            case 'up':
-              target.scrollBy(0, -(amt || 300));
-              break;
-            case 'down':
-              target.scrollBy(0, amt || 300);
-              break;
-          }
-
-          return { success: true, direction: dir, selector: sel };
-        },
-        [direction, selector, amount]
-      );
-    }
-
-    throw new Error('Window not available');
-  }
-
-  /**
-   * 提取内容
-   */
-  private async extractContent(selector?: string, includeHtml?: boolean, tabId?: number): Promise<any> {
-    this.emit('get-content:start', { selector, tabId });
-
-    // 在当前页面执行（content script 环境）
-    if (typeof document !== 'undefined' && !tabId) {
-      const element = selector ? document.querySelector(selector) : document.body;
-      if (!element) {
-        throw new Error(`Element not found: ${selector}`);
-      }
-
-      const result: any = {
-        text: (element as HTMLElement).innerText,
-      };
-
-      if (includeHtml) {
-        result.html = (element as HTMLElement).outerHTML;
-      }
-
-      if (!selector) {
-        result.title = document.title;
-        result.url = window.location.href;
-      }
-
-      return result;
-    }
-
-    // 在指定标签页执行（extension 环境）
-    if (typeof chrome !== 'undefined' && chrome.scripting) {
-      const targetTabId = await this.getTargetTabId(tabId);
-      
-      return await this.executeScriptInTab(
-        targetTabId,
-        (sel: string | undefined, html: boolean) => {
-          const element = sel ? document.querySelector(sel) : document.body;
-          if (!element) {
-            throw new Error(`Element not found: ${sel}`);
-          }
-
-          const result: any = {
-            text: (element as HTMLElement).innerText,
+    try {
+      switch (toolName) {
+        case 'navigate': {
+          await this.page.goto(input.url, { waitUntil: 'networkidle', timeout: 30000 });
+          const title = await this.page.title();
+          return { 
+            success: true, 
+            url: input.url, 
+            title,
+            message: `Navigated to ${title}` 
           };
-
-          if (html) {
-            result.html = (element as HTMLElement).outerHTML;
-          }
-
-          if (!sel) {
-            result.title = document.title;
-            result.url = window.location.href;
-          }
-
-          return result;
-        },
-        [selector, includeHtml || false]
-      );
-    }
-
-    throw new Error('Document not available');
-  }
-
-  /**
-   * 截图
-   */
-  private async takeScreenshot(fullPage?: boolean, tabId?: number): Promise<any> {
-    this.emit('screenshot:start', { fullPage, tabId });
-
-    // 在扩展环境中实现
-    if (typeof chrome !== 'undefined' && chrome.tabs) {
-      const targetTabId = await this.getTargetTabId(tabId);
-      
-      // 如果需要截取特定标签页，先激活它
-      if (tabId) {
-        await chrome.tabs.update(targetTabId, { active: true });
-      }
-      
-      const dataUrl = await chrome.tabs.captureVisibleTab();
-      return { success: true, dataUrl, fullPage: fullPage || false, tabId: targetTabId };
-    }
-
-    throw new Error('Screenshot not available in this context');
-  }
-
-  /**
-   * 等待元素出现
-   */
-  private async waitForElement(selector: string, timeout: number = 5000, tabId?: number): Promise<any> {
-    this.emit('wait-for-element:start', { selector, timeout, tabId });
-
-    // 在当前页面执行（content script 环境）
-    if (typeof document !== 'undefined' && !tabId) {
-      const startTime = Date.now();
-
-      while (Date.now() - startTime < timeout) {
-        const element = document.querySelector(selector);
-        if (element) {
-          return { success: true, selector, found: true };
         }
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-
-      throw new Error(`Element not found within timeout: ${selector}`);
-    }
-
-    // 在指定标签页执行（extension 环境）
-    if (typeof chrome !== 'undefined' && chrome.scripting) {
-      const targetTabId = await this.getTargetTabId(tabId);
-      
-      return await this.executeScriptInTab(
-        targetTabId,
-        async (sel: string, time: number) => {
-          const startTime = Date.now();
-
-          while (Date.now() - startTime < time) {
-            const element = document.querySelector(sel);
-            if (element) {
-              return { success: true, selector: sel, found: true };
-            }
-            await new Promise((resolve) => setTimeout(resolve, 100));
-          }
-
-          throw new Error(`Element not found within timeout: ${sel}`);
-        },
-        [selector, timeout]
-      );
-    }
-
-    throw new Error('Document not available');
-  }
-
-  /**
-   * 后退
-   */
-  private async goBack(tabId?: number): Promise<any> {
-    // 在当前页面执行
-    if (typeof window !== 'undefined' && window.history && !tabId) {
-      window.history.back();
-      return { success: true };
-    }
-
-    // 在指定标签页执行
-    if (typeof chrome !== 'undefined' && chrome.scripting) {
-      const targetTabId = await this.getTargetTabId(tabId);
-      
-      return await this.executeScriptInTab(
-        targetTabId,
-        () => {
-          window.history.back();
-          return { success: true };
+          
+        case 'click':
+          await this.page.click(input.selector, { timeout: 5000 });
+          return { 
+            success: true, 
+            selector: input.selector,
+            message: `Clicked element: ${input.selector}` 
+          };
+          
+        case 'fill':
+          await this.page.fill(input.selector, input.value, { timeout: 5000 });
+          return { 
+            success: true, 
+            selector: input.selector,
+            value: input.value,
+            message: `Filled ${input.selector} with value` 
+          };
+          
+        case 'waitForSelector': {
+          const timeout = input.timeout || 5000;
+          await this.page.waitForSelector(input.selector, { timeout });
+          return { 
+            success: true, 
+            selector: input.selector,
+            message: `Element ${input.selector} appeared` 
+          };
         }
-      );
-    }
-
-    throw new Error('Navigation not available');
-  }
-
-  /**
-   * 前进
-   */
-  private async goForward(tabId?: number): Promise<any> {
-    // 在当前页面执行
-    if (typeof window !== 'undefined' && window.history && !tabId) {
-      window.history.forward();
-      return { success: true };
-    }
-
-    // 在指定标签页执行
-    if (typeof chrome !== 'undefined' && chrome.scripting) {
-      const targetTabId = await this.getTargetTabId(tabId);
-      
-      return await this.executeScriptInTab(
-        targetTabId,
-        () => {
-          window.history.forward();
-          return { success: true };
-        }
-      );
-    }
-
-    throw new Error('Navigation not available');
-  }
-
-  /**
-   * 重新加载页面
-   */
-  private async reloadPage(hard?: boolean, tabId?: number): Promise<any> {
-    // 在当前页面执行
-    if (typeof window !== 'undefined' && !tabId) {
-      window.location.reload();
-      return { success: true, hard: hard || false };
-    }
-
-    // 在指定标签页执行
-    if (typeof chrome !== 'undefined' && chrome.tabs) {
-      const targetTabId = await this.getTargetTabId(tabId);
-      await chrome.tabs.reload(targetTabId, { bypassCache: hard });
-      return { success: true, hard: hard || false, tabId: targetTabId };
-    }
-
-    throw new Error('Window not available');
-  }
-
-  /**
-   * 执行脚本
-   */
-  private async runScript(code: string, tabId?: number): Promise<any> {
-    this.emit('execute-script:start', { code, tabId });
-
-    // 在当前页面执行（content script 环境）
-    if (typeof window !== 'undefined' && !tabId) {
-      try {
-        // eslint-disable-next-line no-eval
-        const result = eval(code);
-        return { success: true, result };
-      } catch (error) {
-        throw new Error(`Script execution failed: ${error}`);
-      }
-    }
-
-    // 在指定标签页执行（extension 环境）
-    if (typeof chrome !== 'undefined' && chrome.scripting) {
-      const targetTabId = await this.getTargetTabId(tabId);
-      
-      return await this.executeScriptInTab(
-        targetTabId,
-        (codeStr: string) => {
-          try {
-            // eslint-disable-next-line no-eval
-            const result = eval(codeStr);
-            return { success: true, result };
-          } catch (error) {
-            throw new Error(`Script execution failed: ${error}`);
+          
+        case 'getContent': {
+          let htmlContent = await this.page.content();
+          const cleanHtml = input.cleanHtml !== false; // 默认为 true
+          const requestedMaxLength = input.maxLength || 5000; // 降低默认值到 5000
+          
+          if (cleanHtml) {
+            htmlContent = this.cleanHtmlContent(htmlContent);
           }
-        },
-        [code]
-      );
-    }
-
-    throw new Error('Window not available');
-  }
-
-  // ============ 标签页管理方法 ============
-
-  /**
-   * 创建新标签页
-   */
-  private async createTab(url?: string, active: boolean = true): Promise<any> {
-    if (typeof chrome !== 'undefined' && chrome.tabs) {
-      const tab = await chrome.tabs.create({ url, active });
-      return { 
-        success: true, 
-        tabId: tab.id, 
-        url: tab.url,
-        active: tab.active 
-      };
-    }
-
-    throw new Error('Tab creation not available in this context');
-  }
-
-  /**
-   * 关闭标签页
-   */
-  private async closeTab(tabId: number): Promise<any> {
-    if (typeof chrome !== 'undefined' && chrome.tabs) {
-      await chrome.tabs.remove(tabId);
-      return { success: true, tabId };
-    }
-
-    throw new Error('Tab closure not available in this context');
-  }
-
-  /**
-   * 切换到指定标签页
-   */
-  private async switchTab(tabId: number): Promise<any> {
-    if (typeof chrome !== 'undefined' && chrome.tabs) {
-      await chrome.tabs.update(tabId, { active: true });
-      
-      // 获取标签页所在窗口并激活
-      const tab = await chrome.tabs.get(tabId);
-      if (tab.windowId) {
-        await chrome.windows.update(tab.windowId, { focused: true });
+          
+          // 强制限制：无论用户输入什么，都不超过 10000
+          const { content: finalContent, truncated, originalLength } = this.truncateContent(htmlContent, requestedMaxLength);
+          
+          return { 
+            success: true,
+            content: finalContent,
+            length: finalContent.length,
+            originalLength,
+            truncated,
+            cleaned: cleanHtml,
+            hardLimit: 10000,
+            message: truncated 
+              ? `⚠️ Content truncated: ${originalLength} → ${finalContent.length} chars (hard limit: 10000). RECOMMENDATION: Use getPageText (text only) or getPageSummary (structured data) instead.`
+              : `Retrieved ${finalContent.length} characters of HTML (cleaned: ${cleanHtml})`
+          };
+        }
+          
+        case 'getPageText': {
+          const pageText = await this.page.evaluate(() => {
+            // 移除不可见元素和脚本
+            const clone = document.body.cloneNode(true) as HTMLElement;
+            clone.querySelectorAll('script, style, noscript, iframe').forEach(el => el.remove());
+            return clone.innerText || clone.textContent || '';
+          });
+          
+          const textMaxLength = input.maxLength || 30000;
+          const { content: finalText, truncated: textTruncated, originalLength: textOriginalLength } = 
+            this.truncateContent(pageText, textMaxLength);
+          
+          return {
+            success: true,
+            text: finalText,
+            length: finalText.length,
+            originalLength: textOriginalLength,
+            truncated: textTruncated,
+            message: textTruncated
+              ? `Retrieved ${finalText.length} characters of text (truncated from ${textOriginalLength})`
+              : `Retrieved ${finalText.length} characters of text`
+          };
+        }
+          
+        case 'getPageSummary': {
+          const summary = await this.page.evaluate(() => {
+            // 获取标题
+            const title = document.title;
+            
+            // 获取 meta 信息
+            const description = document.querySelector('meta[name="description"]')?.getAttribute('content') || '';
+            const keywords = document.querySelector('meta[name="keywords"]')?.getAttribute('content') || '';
+            
+            // 获取主要标题
+            const h1Elements = Array.from(document.querySelectorAll('h1')).map(h => h.textContent?.trim()).filter(Boolean);
+            const h2Elements = Array.from(document.querySelectorAll('h2')).slice(0, 10).map(h => h.textContent?.trim()).filter(Boolean);
+            
+            // 获取主要段落（前 5 个）
+            const paragraphs = Array.from(document.querySelectorAll('p'))
+              .map(p => p.textContent?.trim())
+              .filter(text => text && text.length > 50)
+              .slice(0, 5);
+            
+            // 获取链接数量
+            const linkCount = document.querySelectorAll('a').length;
+            
+            // 获取图片数量
+            const imageCount = document.querySelectorAll('img').length;
+            
+            // 获取表单数量
+            const formCount = document.querySelectorAll('form').length;
+            
+            return {
+              title,
+              description,
+              keywords,
+              h1: h1Elements,
+              h2: h2Elements,
+              mainParagraphs: paragraphs,
+              stats: {
+                links: linkCount,
+                images: imageCount,
+                forms: formCount
+              }
+            };
+          });
+          
+          return {
+            success: true,
+            summary,
+            message: `Retrieved page summary: ${summary.title}`
+          };
+        }
+          
+        case 'getText': {
+          const text = await this.page.textContent(input.selector);
+          return { 
+            success: true,
+            text,
+            selector: input.selector,
+            message: text ? `Got text from ${input.selector}` : `No text found at ${input.selector}`
+          };
+        }
+          
+        case 'getAttribute': {
+          const attrValue = await this.page.getAttribute(input.selector, input.attribute);
+          return { 
+            success: true,
+            value: attrValue,
+            selector: input.selector,
+            attribute: input.attribute,
+            message: attrValue ? `Got ${input.attribute} attribute` : `Attribute ${input.attribute} not found`
+          };
+        }
+          
+        case 'screenshot': {
+          const screenshot = await this.page.screenshot({ 
+            fullPage: input.fullPage || false 
+          });
+          return { 
+            success: true,
+            screenshot: screenshot.toString('base64'),
+            size: screenshot.length,
+            message: `Screenshot taken (${screenshot.length} bytes)` 
+          };
+        }
+          
+        case 'evaluate': {
+          const result = await this.page.evaluate(input.script);
+          return { 
+            success: true,
+            result,
+            script: input.script,
+            message: `Script executed successfully` 
+          };
+        }
+          
+        default:
+          throw new Error(`Unknown tool: ${toolName}`);
       }
-      
-      return { 
-        success: true, 
-        tabId,
-        url: tab.url,
-        title: tab.title 
-      };
-    }
-
-    throw new Error('Tab switching not available in this context');
-  }
-
-  /**
-   * 列出所有标签页
-   */
-  private async listTabs(currentWindowOnly: boolean = true): Promise<any> {
-    if (typeof chrome !== 'undefined' && chrome.tabs) {
-      const query: chrome.tabs.QueryInfo = currentWindowOnly 
-        ? { currentWindow: true } 
-        : {};
-      
-      const tabs = await chrome.tabs.query(query);
-      
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } catch (error: any) {
+      // 返回错误信息而不是抛出异常，让 LLM 可以处理
       return {
-        success: true,
-        count: tabs.length,
-        tabs: tabs.map(tab => ({
-          id: tab.id,
-          url: tab.url,
-          title: tab.title,
-          active: tab.active,
-          windowId: tab.windowId,
-        })),
+        success: false,
+        error: error.message,
+        message: `Error in ${toolName}: ${error.message}`
       };
     }
-
-    throw new Error('Tab listing not available in this context');
-  }
-
-  /**
-   * 获取当前活动标签页
-   */
-  private async getActiveTab(): Promise<any> {
-    if (typeof chrome !== 'undefined' && chrome.tabs) {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      
-      if (tab) {
-        return {
-          success: true,
-          tabId: tab.id,
-          url: tab.url,
-          title: tab.title,
-          windowId: tab.windowId,
-        };
-      }
-      
-      throw new Error('No active tab found');
-    }
-
-    throw new Error('Tab query not available in this context');
   }
 }
+

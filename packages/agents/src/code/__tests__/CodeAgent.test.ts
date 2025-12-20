@@ -8,31 +8,32 @@ import {
   assertions,
 } from '../sandbox/__tests__/test-helpers';
 import { initEnv, getLLMConfig } from '@monkey-agent/utils';
+import { LLMClient } from '@monkey-agent/llm';
 
 // 初始化测试环境
 initTestEnv();
 
-// 获取 LLM 配置
-let llmConfig: any;
+// 创建 LLM Client
+let llmClient: LLMClient;
 try {
   const validation = initEnv({ verbose: false });
   if (validation.valid) {
-    llmConfig = getLLMConfig();
+    llmClient = new LLMClient(getLLMConfig());
   } else {
     // 如果没有 LLM API Key，使用 mock 配置
-    llmConfig = {
+    llmClient = new LLMClient({
       provider: 'openai' as const,
       apiKey: 'sk-mock-key-for-testing',
       model: 'gpt-4',
-    };
+    });
   }
 } catch (error) {
   // 出错时使用 mock 配置
-  llmConfig = {
+  llmClient = new LLMClient({
     provider: 'openai' as const,
     apiKey: 'sk-mock-key-for-testing',
     model: 'gpt-4',
-  };
+  });
 }
 
 describe('CodeAgent', () => {
@@ -51,7 +52,7 @@ describe('CodeAgent', () => {
     it('应该成功创建 CodeAgent 实例', () => {
       const agent = new CodeAgent({
         e2bApiKey: process.env.E2B_API_KEY!,
-        llmConfig,
+        llmClient,
       });
 
       expect(agent).toBeDefined();
@@ -62,10 +63,11 @@ describe('CodeAgent', () => {
     it('应该提供正确的工具定义', () => {
       const agent = new CodeAgent({
         e2bApiKey: process.env.E2B_API_KEY!,
-        llmConfig,
+        llmClient,
       });
 
-      const tools = agent.getToolDefinitions();
+      // 使用类型断言访问 protected 方法
+      const tools = (agent as any).getToolDefinitions();
       const toolNames = Object.keys(tools);
       expect(toolNames).toHaveLength(5);
       
@@ -81,7 +83,7 @@ describe('CodeAgent', () => {
     it('应该成功执行 Python 代码', async () => {
       const agent = new CodeAgent({
         e2bApiKey: process.env.E2B_API_KEY!,
-        llmConfig: llmConfig,
+        llmClient,
       });
 
       const result = await agent['executeCode']({
@@ -98,7 +100,7 @@ describe('CodeAgent', () => {
     it('应该成功执行 JavaScript 代码', async () => {
       const agent = new CodeAgent({
         e2bApiKey: process.env.E2B_API_KEY!,
-        llmConfig: llmConfig,
+        llmClient,
       });
 
       const result = await agent['executeCode']({
@@ -115,7 +117,7 @@ describe('CodeAgent', () => {
     it('应该成功执行 Bash 代码', async () => {
       const agent = new CodeAgent({
         e2bApiKey: process.env.E2B_API_KEY!,
-        llmConfig: llmConfig,
+        llmClient,
       });
 
       const result = await agent['executeCode']({
@@ -132,7 +134,7 @@ describe('CodeAgent', () => {
     it('应该处理代码执行错误', async () => {
       const agent = new CodeAgent({
         e2bApiKey: process.env.E2B_API_KEY!,
-        llmConfig: llmConfig,
+        llmClient,
       });
 
       const result = await agent['executeCode']({
@@ -149,7 +151,7 @@ describe('CodeAgent', () => {
     it('应该支持超时设置', async () => {
       const agent = new CodeAgent({
         e2bApiKey: process.env.E2B_API_KEY!,
-        llmConfig: llmConfig,
+        llmClient,
         executionTimeout: 5000,
       });
 
@@ -169,12 +171,12 @@ describe('CodeAgent', () => {
     it('应该成功安装 Python 依赖', async () => {
       const agent = new CodeAgent({
         e2bApiKey: process.env.E2B_API_KEY!,
-        llmConfig: llmConfig,
+        llmClient,
       });
 
       const result = await agent['installDependency']({
         language: 'python',
-        package: 'requests',
+        packageName: 'requests',
       });
 
       expect(result.success).toBe(true);
@@ -185,12 +187,12 @@ describe('CodeAgent', () => {
     it('应该成功安装 JavaScript 依赖', async () => {
       const agent = new CodeAgent({
         e2bApiKey: process.env.E2B_API_KEY!,
-        llmConfig: llmConfig,
+        llmClient,
       });
 
       const result = await agent['installDependency']({
         language: 'javascript',
-        package: 'lodash',
+        packageName: 'lodash',
       });
 
       expect(result.success).toBe(true);
@@ -201,12 +203,12 @@ describe('CodeAgent', () => {
     it('应该处理不存在的包', async () => {
       const agent = new CodeAgent({
         e2bApiKey: process.env.E2B_API_KEY!,
-        llmConfig: llmConfig,
+        llmClient,
       });
 
       const result = await agent['installDependency']({
         language: 'python',
-        package: 'this-package-definitely-does-not-exist-12345',
+        packageName: 'this-package-definitely-does-not-exist-12345',
       });
 
       expect(result.success).toBe(false);
@@ -220,7 +222,7 @@ describe('CodeAgent', () => {
     it('应该成功执行简单命令', async () => {
       const agent = new CodeAgent({
         e2bApiKey: process.env.E2B_API_KEY!,
-        llmConfig: llmConfig,
+        llmClient,
       });
 
       const result = await agent['runShellCommand']({
@@ -236,7 +238,7 @@ describe('CodeAgent', () => {
     it('应该成功执行多行命令', async () => {
       const agent = new CodeAgent({
         e2bApiKey: process.env.E2B_API_KEY!,
-        llmConfig: llmConfig,
+        llmClient,
       });
 
       const result = await agent['runShellCommand']({
@@ -251,7 +253,7 @@ describe('CodeAgent', () => {
     it('应该处理命令执行错误', async () => {
       const agent = new CodeAgent({
         e2bApiKey: process.env.E2B_API_KEY!,
-        llmConfig: llmConfig,
+        llmClient,
       });
 
       const result = await agent['runShellCommand']({
@@ -268,7 +270,7 @@ describe('CodeAgent', () => {
     it('应该成功写入和读取文件', async () => {
       const agent = new CodeAgent({
         e2bApiKey: process.env.E2B_API_KEY!,
-        llmConfig: llmConfig,
+        llmClient,
       });
 
       const testContent = 'Hello, World!';
@@ -296,7 +298,7 @@ describe('CodeAgent', () => {
     it('应该处理读取不存在的文件', async () => {
       const agent = new CodeAgent({
         e2bApiKey: process.env.E2B_API_KEY!,
-        llmConfig: llmConfig,
+        llmClient,
       });
 
       const result = await agent['readFileInEnvironment']({
@@ -312,7 +314,7 @@ describe('CodeAgent', () => {
     it('应该支持创建嵌套目录', async () => {
       const agent = new CodeAgent({
         e2bApiKey: process.env.E2B_API_KEY!,
-        llmConfig: llmConfig,
+        llmClient,
       });
 
       const testPath = '/tmp/nested/directory/test.txt';
@@ -341,7 +343,7 @@ describe('CodeAgent', () => {
     it('应该正确初始化沙箱', async () => {
       const agent = new CodeAgent({
         e2bApiKey: process.env.E2B_API_KEY!,
-        llmConfig: llmConfig,
+        llmClient,
       });
 
       await agent['initializeSandbox']();
@@ -353,7 +355,7 @@ describe('CodeAgent', () => {
     it('应该正确清理沙箱', async () => {
       const agent = new CodeAgent({
         e2bApiKey: process.env.E2B_API_KEY!,
-        llmConfig: llmConfig,
+        llmClient,
       });
 
       await agent['initializeSandbox']();
@@ -368,7 +370,7 @@ describe('CodeAgent', () => {
       
       const agent = new CodeAgent({
         e2bApiKey: process.env.E2B_API_KEY!,
-        llmConfig: llmConfig,
+        llmClient,
         sandboxClient: customSandbox,
       });
 
@@ -383,7 +385,7 @@ describe('CodeAgent', () => {
     it('应该尊重 allowedLanguages 配置', async () => {
       const agent = new CodeAgent({
         e2bApiKey: process.env.E2B_API_KEY!,
-        llmConfig: llmConfig,
+        llmClient,
         allowedLanguages: ['python'],
       });
 
@@ -410,13 +412,13 @@ describe('CodeAgent', () => {
     it('应该支持安装依赖后执行代码', async () => {
       const agent = new CodeAgent({
         e2bApiKey: process.env.E2B_API_KEY!,
-        llmConfig: llmConfig,
+        llmClient,
       });
 
       // 安装依赖
       const installResult = await agent['installDependency']({
         language: 'python',
-        package: 'requests',
+        packageName: 'requests',
       });
       expect(installResult.success).toBe(true);
 
@@ -435,7 +437,7 @@ describe('CodeAgent', () => {
     it('应该支持写入文件后执行代码读取', async () => {
       const agent = new CodeAgent({
         e2bApiKey: process.env.E2B_API_KEY!,
-        llmConfig: llmConfig,
+        llmClient,
       });
 
       const testData = { message: 'Hello from JSON' };
@@ -470,7 +472,7 @@ with open('${filePath}', 'r') as f:
     it('应该处理无效的语言类型', async () => {
       const agent = new CodeAgent({
         e2bApiKey: process.env.E2B_API_KEY!,
-        llmConfig: llmConfig,
+        llmClient,
       });
 
       const result = await agent['executeCode']({
@@ -486,7 +488,7 @@ with open('${filePath}', 'r') as f:
     it('应该处理空代码', async () => {
       const agent = new CodeAgent({
         e2bApiKey: process.env.E2B_API_KEY!,
-        llmConfig: llmConfig,
+        llmClient,
       });
 
       const result = await agent['executeCode']({
@@ -503,7 +505,7 @@ with open('${filePath}', 'r') as f:
     it('应该处理沙箱初始化失败', async () => {
       const agent = new CodeAgent({
         e2bApiKey: 'invalid-api-key',
-        llmConfig: llmConfig,
+        llmClient,
       });
 
       const result = await agent['executeCode']({

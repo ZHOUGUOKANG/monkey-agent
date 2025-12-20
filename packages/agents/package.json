@@ -8,19 +8,41 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./browser": {
+      "types": "./dist/browser/index.d.ts",
+      "import": "./dist/browser/index.js"
+    },
+    "./chat": {
+      "types": "./dist/chat/index.d.ts",
+      "import": "./dist/chat/index.js"
     }
   },
   "scripts": {
     "dev": "vite build --watch",
     "build": "vite build",
     "test": "vitest",
-    "test:integration": "vitest E2BSandboxClient.integration.test.ts",
-    "test:chat": "tsx src/chat/__tests__/chat-agent.integration.test.ts",
-    "test:helpers": "vitest E2BSandboxClient.helpers.test.ts",
-    "test:e2b": "vitest E2BSandboxClient",
     "test:watch": "vitest --watch",
     "test:coverage": "vitest --coverage",
+    "test:browser": "vitest BrowserAgent",
+    "test:browser:e2e": "vitest BrowserAgent.e2e.test.ts",
+    "test:browser:context": "vitest BrowserAgent.context.e2e.spec.ts",
+    "test:browser:unit": "vitest BrowserAgent.test.ts",
+    "test:chat": "vitest ChatAgent",
+    "test:chat:integration": "tsx src/chat/__tests__/chat-agent.integration.test.ts",
+    "test:chat:simple": "vitest ChatAgent-simple-mode.test.ts",
+    "test:chat:unit": "vitest ChatAgent.unit.test.ts",
+    "test:code": "vitest CodeAgent",
+    "test:code:format": "vitest CodeAgent.format.test.ts",
+    "test:code:unit": "vitest CodeAgent.test.ts",
+    "test:report": "vitest ReportAgent.e2e.spec.ts",
+    "test:report:verbose": "DEBUG=* vitest ReportAgent.e2e.spec.ts",
+    "test:system": "vitest ComputerAgent.test.ts",
+    "test:e2b": "vitest E2BSandboxClient",
+    "test:e2b:integration": "vitest E2BSandboxClient.integration.test.ts",
+    "test:e2b:helpers": "vitest E2BSandboxClient.helpers.test.ts",
     "example:e2b": "tsx src/code/sandbox/__tests__/example.ts",
     "clean": "rm -rf dist"
   },
@@ -29,13 +51,15 @@
     "@monkey-agent/base": "workspace:*",
     "@monkey-agent/context": "workspace:*",
     "@monkey-agent/types": "workspace:*",
-    "@monkey-agent/utils": "workspace:*"
+    "@monkey-agent/utils": "workspace:*",
+    "robotjs": "^0.6.0"
   },
   "devDependencies": {
-    "@types/node": "^22.10.2",
+    "@types/node": "^25.0.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3",
     "vite": "^5.0.8",
+    "vite-plugin-dts": "^4.5.4",
     "vitest": "^2.1.8"
   }
 }
