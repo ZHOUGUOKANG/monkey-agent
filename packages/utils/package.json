@@ -1,0 +1,27 @@
+{
+  "name": "@monkey-agent/utils",
+  "version": "0.1.0",
+  "description": "Monkey Agent - 工具函数",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "vite build",
+    "test": "vitest",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.1",
+    "typescript": "^5.9.3",
+    "vite": "^5.0.8",
+    "vite-plugin-dts": "^4.5.4",
+    "vitest": "^4.0.16"
+  }
+}

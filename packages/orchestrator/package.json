@@ -1,0 +1,31 @@
+{
+  "name": "@monkey-agent/orchestrator",
+  "version": "0.1.0",
+  "description": "Monkey Agent - 多智能体编排",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "vite build",
+    "test": "vitest",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@monkey-agent/base": "workspace:*",
+    "@monkey-agent/context": "workspace:*",
+    "@monkey-agent/types": "workspace:*",
+    "eventemitter3": "^5.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "vite": "^7.3.0",
+    "vitest": "^4.0.16"
+  }
+}

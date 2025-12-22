@@ -1,0 +1,41 @@
+{
+  "name": "@monkey-agent/agents",
+  "version": "0.1.0",
+  "description": "Monkey Agent - Agent 实现",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "vite build",
+    "test": "vitest",
+    "test:integration": "vitest E2BSandboxClient.integration.test.ts",
+    "test:chat": "tsx src/chat/__tests__/chat-agent.integration.test.ts",
+    "test:helpers": "vitest E2BSandboxClient.helpers.test.ts",
+    "test:e2b": "vitest E2BSandboxClient",
+    "test:watch": "vitest --watch",
+    "test:coverage": "vitest --coverage",
+    "example:e2b": "tsx src/code/sandbox/__tests__/example.ts",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@e2b/code-interpreter": "^2.3.3",
+    "@monkey-agent/base": "workspace:*",
+    "@monkey-agent/context": "workspace:*",
+    "@monkey-agent/types": "workspace:*",
+    "@monkey-agent/utils": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3",
+    "vite": "^5.0.8",
+    "vitest": "^2.1.8"
+  }
+}
