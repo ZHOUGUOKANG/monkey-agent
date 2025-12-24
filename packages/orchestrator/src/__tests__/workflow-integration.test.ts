@@ -438,22 +438,6 @@ describe('工作流集成测试', () => {
         expect.arrayContaining(['browser-agent', 'code-agent', 'file-agent'])
       );
     });
-
-    it('应该根据类型获取 Agent', () => {
-      const browser = orchestrator.getAgentByType('browser');
-      expect(browser?.id).toBe('browser-agent');
-
-      const code = orchestrator.getAgentByType('code');
-      expect(code?.id).toBe('code-agent');
-
-      const file = orchestrator.getAgentByType('file');
-      expect(file?.id).toBe('file-agent');
-    });
-
-    it('应该获取可用的 Agent 类型', () => {
-      const types = orchestrator.getAvailableAgentTypes();
-      expect(types).toEqual(expect.arrayContaining(['browser', 'code', 'file']));
-    });
   });
 
   describe('工作流生成', () => {

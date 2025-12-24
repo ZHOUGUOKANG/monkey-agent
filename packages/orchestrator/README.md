@@ -235,12 +235,13 @@ orchestrator.unregisterAgent('browser-agent');
 const agent = orchestrator.getAgent('browser-agent');
 ```
 
-##### getAgentByType(type: string): IAgent | undefined
+##### getAgentByIdOrName(identifier: string): IAgent | undefined
 
-根据类型获取 Agent 实例（支持模糊匹配）。
+根据 ID 或名称查找 Agent（支持模糊匹配）。
 
 ```typescript
-const browserAgent = orchestrator.getAgentByType('browser');
+const browserAgent = orchestrator.getAgentByIdOrName('browser');
+const codeAgent = orchestrator.getAgentByIdOrName('code-agent');
 ```
 
 ##### getAllAgents(): IAgent[]
@@ -251,13 +252,13 @@ const browserAgent = orchestrator.getAgentByType('browser');
 const agents = orchestrator.getAllAgents();
 ```
 
-##### getAvailableAgentTypes(): string[]
+##### getAgentsInfo(): Array<{id, name, description, capabilities}>
 
-获取所有可用的 Agent 类型。
+获取所有 Agent 的基本信息（供 ChatAgent 使用）。
 
 ```typescript
-const types = orchestrator.getAvailableAgentTypes();
-// => ['browser', 'code', 'file', ...]
+const agentsInfo = orchestrator.getAgentsInfo();
+// 返回简化的信息：id, name, description, capabilities
 ```
 
 ##### executeWorkflow(workflow: Workflow, options?: WorkflowExecutionOptions): Promise\<WorkflowExecutionResult\>
@@ -279,6 +280,30 @@ const result = await orchestrator.executeWorkflow(workflow, {
   continueOnError: false,
   maxConcurrency: 5,
   errorHandler: customErrorHandler
+});
+```
+
+##### cancelWorkflow(workflowId: string): boolean
+
+取消正在执行的工作流。
+
+**参数：**
+- `workflowId: string` - 工作流 ID
+
+**返回：** `boolean` - 是否成功取消
+
+**示例：**
+
+```typescript
+// 启动工作流
+const workflowPromise = orchestrator.executeWorkflow(workflow);
+
+// 在另一个地方取消
+const cancelled = orchestrator.cancelWorkflow(workflow.id);
+
+// 监听取消事件
+orchestrator.on('workflow:cancelled', ({ workflowId }) => {
+  console.log(`工作流 ${workflowId} 已取消`);
 });
 ```
 
@@ -368,8 +393,6 @@ interface WorkflowExecutionOptions {
   continueOnError?: boolean;
   /** 最大重试次数 */
   maxRetries?: number;
-  /** 是否启用回滚 */
-  enableRollback?: boolean;
   /** 并行度限制 */
   maxConcurrency?: number;
   /** 自定义错误处理器 */
@@ -435,7 +458,76 @@ interface ExecutionEvent {
 
 ## 高级用法
 
-### 自定义错误处理器
+### 增强的错误处理系统
+
+新版本的错误处理器提供了错误分类、严重程度判断和结构化日志：
+
+```typescript
+import { ErrorHandler, ErrorType, ErrorSeverity } from '@monkey-agent/orchestrator';
+
+// 使用默认的增强错误处理器
+const errorHandler = new ErrorHandler();
+
+// 错误会被自动分类为：
+// - ErrorType.NETWORK: 网络错误
+// - ErrorType.TIMEOUT: 超时错误  
+// - ErrorType.VALIDATION: 验证错误
+// - ErrorType.AGENT_NOT_FOUND: Agent 未找到
+// - ErrorType.EXECUTION: 执行错误
+
+// 并根据严重程度自动使用不同的日志级别：
+// - ErrorSeverity.CRITICAL/HIGH: console.error
+// - ErrorSeverity.MEDIUM: console.warn
+// - ErrorSeverity.LOW: console.log
+
+// 使用自定义错误处理器
+class CustomErrorHandler extends ErrorHandler {
+  handle(error: Error, context: any): void {
+    super.handle(error, context);  // 调用基类方法获得分类和日志
+    
+    // 添加自定义逻辑
+    sendAlert(error, context);
+    logToExternalService(error);
+  }
+}
+
+const result = await orchestrator.executeWorkflow(workflow, {
+  errorHandler: new CustomErrorHandler()
+});
+```
+
+### 工作流取消机制
+
+支持在运行时取消工作流执行：
+
+```typescript
+// 启动长时间运行的工作流
+const workflowPromise = orchestrator.executeWorkflow(longRunningWorkflow);
+
+// 设置定时器，10秒后取消
+setTimeout(() => {
+  const success = orchestrator.cancelWorkflow(longRunningWorkflow.id);
+  if (success) {
+    console.log('工作流已取消');
+  }
+}, 10000);
+
+// 监听取消事件
+orchestrator.on('workflow:cancelled', ({ workflowId, context }) => {
+  console.log(`工作流 ${workflowId} 在执行 ${context.duration}ms 后被取消`);
+});
+
+try {
+  await workflowPromise;
+} catch (error) {
+  // 处理取消导致的错误
+  if (error.message.includes('cancelled')) {
+    console.log('工作流被用户取消');
+  }
+}
+```
+
+### 自定义错误处理器（旧版兼容）
 
 ```typescript
 import { IErrorHandler } from '@monkey-agent/orchestrator';
@@ -483,26 +575,39 @@ const result = await retry.execute(
 );
 ```
 
-### 进度追踪
+### 增强的进度追踪
+
+新版本的 ProgressTracker 提供了实时进度百分比、预估剩余时间和内存使用监控：
 
 ```typescript
 import { ProgressTracker } from '@monkey-agent/orchestrator';
 
 const tracker = new ProgressTracker();
 
-// 初始化
+// 初始化（自动进行，用户通常无需手动调用）
 tracker.init(workflow, levels);
 
-// 记录事件
+// 记录事件（自动进行）
 tracker.recordEvent('agent:start', { agentId: 'agent-1' });
 tracker.recordAgentDuration(1500);
+tracker.recordAgentComplete();
 
-// 获取指标
+// 获取详细指标
 const metrics = tracker.getMetrics();
 console.log('总 Agent 数:', metrics.totalAgents);
 console.log('总步骤数:', metrics.totalSteps);
 console.log('并行层级:', metrics.parallelLevels);
 console.log('平均执行时间:', metrics.averageAgentDuration);
+console.log('峰值内存使用:', metrics.peakMemoryUsage, 'bytes');
+
+// 实时监控进度
+orchestrator.on('agent:complete', () => {
+  const progress = tracker.getProgress();  // 返回百分比（0-100）
+  const remaining = tracker.getEstimatedTimeRemaining();  // 返回毫秒数
+  
+  console.log(`进度: ${progress}%`);
+  console.log(`预计剩余时间: ${(remaining / 1000).toFixed(1)}秒`);
+});
 ```
 
 ### 上下文工具集成

@@ -19,21 +19,13 @@ export default defineConfig({
   build: {
     lib: {
       entry: resolve(__dirname, 'src/index.ts'),
-      name: 'MonkeyAgentOrchestrator',
+      name: 'MonkeyAgentTools',
       formats: ['es'],
       fileName: 'index',
     },
     rollupOptions: {
-      external: [
-        '@monkey-agent/base',
-        '@monkey-agent/types',
-        '@monkey-agent/agents',
-        '@monkey-agent/context',
-        'eventemitter3',
-        'fs/promises',
-        'path',
-        /^node:.*/,
-      ],
+      external: ['ai', 'zod'],
     },
   },
 });
+

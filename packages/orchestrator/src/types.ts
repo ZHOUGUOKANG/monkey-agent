@@ -2,7 +2,7 @@
  * Orchestrator 核心类型定义
  */
 
-import type { IAgent, TaskResult, AgentNode, Workflow } from '@monkey-agent/types';
+import type { AgentNode, AgentExecutionResult } from '@monkey-agent/types';
 import type { WorkflowExecutionContext } from '@monkey-agent/context';
 
 /**
@@ -14,7 +14,7 @@ export interface AgentExecutionState {
   startTime?: number;
   endTime?: number;
   duration?: number;
-  result?: TaskResult;
+  result?: AgentExecutionResult;
   error?: Error;
   retryCount: number;
 }
@@ -30,8 +30,10 @@ export interface IErrorHandler {
  * 执行选项
  */
 export interface WorkflowExecutionOptions {
-  /** 超时时间(毫秒) */
+  /** 整体工作流超时时间(毫秒) */
   timeout?: number;
+  /** 单个Agent执行超时时间(毫秒)，默认5分钟 */
+  agentTimeout?: number;
   /** 失败时是否继续 */
   continueOnError?: boolean;
   /** 最大重试次数 */

@@ -29,6 +29,7 @@ export class WorkflowOrchestrator extends EventEmitter {
   private executor: WorkflowExecutor;
   private errorHandler: ErrorHandler;
   private tracker: ProgressTracker;
+  private activeContexts: Map<string, ExecutionContext> = new Map();  // 新增：跟踪活动的执行上下文
 
   constructor() {
     super();
@@ -44,9 +45,29 @@ export class WorkflowOrchestrator extends EventEmitter {
       if (data.result?.duration) {
         this.tracker.recordAgentDuration(data.result.duration);
       }
+      // 记录 Agent 完成
+      this.tracker.recordAgentComplete();
     });
     this.executor.on('agent:error', (data) => this.emit('agent:error', data));
     this.executor.on('agent:retry', (data) => this.emit('agent:retry', data));
+    
+    // 转发思考和工具调用事件
+    this.executor.on('agent:thinking', (data) => this.emit('agent:thinking', data));
+    this.executor.on('agent:tool-call', (data) => this.emit('agent:tool-call', data));
+    this.executor.on('agent:tool-result', (data) => this.emit('agent:tool-result', data));
+    this.executor.on('agent:tool-error', (data) => this.emit('agent:tool-error', data));
+    
+    // 转发流式事件
+    this.executor.on('agent:stream-text', (data) => this.emit('agent:stream-text', data));
+    this.executor.on('agent:stream-finish', (data) => this.emit('agent:stream-finish', data));
+    
+    // 转发其他 agent 事件
+    this.executor.on('agent:compressed', (data) => this.emit('agent:compressed', data));
+    this.executor.on('agent:warning', (data) => this.emit('agent:warning', data));
+    this.executor.on('agent:context-length-error', (data) => this.emit('agent:context-length-error', data));
+    this.executor.on('agent:max-iterations', (data) => this.emit('agent:max-iterations', data));
+    this.executor.on('agent:reflection', (data) => this.emit('agent:reflection', data));
+    this.executor.on('agent:task-complete', (data) => this.emit('agent:task-complete', data));
   }
 
   /**
@@ -73,26 +94,25 @@ export class WorkflowOrchestrator extends EventEmitter {
   }
 
   /**
-   * 根据类型获取 Agent
+   * 根据 ID 或名称查找 Agent（模糊匹配）
+   * 用于 WorkflowExecutor 根据 agentNode.type 查找对应的 Agent
    */
-  getAgentByType(type: string): IAgent | undefined {
-    // 精确匹配
-    const exactMatch = this.agents.get(`${type}-agent`);
-    if (exactMatch) {
-      return exactMatch;
-    }
-
-    // 模糊匹配
+  getAgentByIdOrName(identifier: string): IAgent | undefined {
+    // 1. 精确匹配 ID
+    const exactMatch = this.agents.get(identifier);
+    if (exactMatch) return exactMatch;
+    
+    // 2. 模糊匹配 ID 或 name
     for (const agent of this.agents.values()) {
       const idLower = agent.id.toLowerCase();
       const nameLower = agent.name.toLowerCase();
-      const typeLower = type.toLowerCase();
+      const identifierLower = identifier.toLowerCase();
       
-      if (idLower.includes(typeLower) || nameLower.includes(typeLower)) {
+      if (idLower.includes(identifierLower) || nameLower.includes(identifierLower)) {
         return agent;
       }
     }
-
+    
     return undefined;
   }
 
@@ -104,27 +124,38 @@ export class WorkflowOrchestrator extends EventEmitter {
   }
 
   /**
-   * 获取所有已注册的 Agent 类型
-   * 从 Agent ID 或 name 中提取类型信息
+   * 获取所有 Agent 的基本信息（供 ChatAgent 使用）
+   * 返回简化的信息：id, name, description, capabilities
    */
-  getAvailableAgentTypes(): string[] {
-    const types = new Set<string>();
-    const knownTypes = ['browser', 'crawler', 'code', 'file', 'shell', 'computer', 'image'];
-    
-    for (const agent of this.agents.values()) {
-      const idLower = agent.id.toLowerCase();
-      const nameLower = agent.name.toLowerCase();
-      
-      // 尝试从 ID 或 name 中提取已知类型
-      for (const type of knownTypes) {
-        if (idLower.includes(type) || nameLower.includes(type)) {
-          types.add(type);
-          break;
-        }
-      }
+  getAgentsInfo(): Array<{
+    id: string;
+    name: string;
+    description: string;
+    capabilities: string[];
+  }> {
+    return this.getAllAgents().map(agent => ({
+      id: agent.id,
+      name: agent.name,
+      description: agent.description,
+      capabilities: agent.capabilities,
+    }));
+  }
+
+  /**
+   * 取消正在执行的工作流
+   * 
+   * @param workflowId 工作流 ID
+   * @returns 是否成功取消
+   */
+  cancelWorkflow(workflowId: string): boolean {
+    const context = this.activeContexts.get(workflowId);
+    if (!context) {
+      return false;  // 工作流不存在或已完成
     }
-    
-    return Array.from(types);
+
+    context.cancel();
+    this.emit('workflow:cancel-requested', { workflowId });
+    return true;
   }
 
   /**
@@ -144,6 +175,14 @@ export class WorkflowOrchestrator extends EventEmitter {
 
     // 2. 创建执行上下文
     const context = new ExecutionContext(workflow.id);
+    
+    // 注入 workflow 的上下文信息（如 pageInfo, tabId）
+    if (workflow.context) {
+      context.workflowContext = workflow.context;
+    }
+    
+    // 跟踪活动的执行上下文
+    this.activeContexts.set(workflow.id, context);
     
     // 3. 拓扑排序获取执行层级
     const levels = this.scheduler.schedule(workflow.agentGraph);
@@ -198,9 +237,14 @@ export class WorkflowOrchestrator extends EventEmitter {
         context.complete();
       }
       
+      // 构建最终结果
+      const finalResult = this.buildResult(workflow, context);
+      
       this.emit('workflow:complete', { 
         workflowId: workflow.id,
-        duration: Date.now() - context.startTime 
+        duration: Date.now() - context.startTime,
+        result: finalResult,  // 包含完整的执行结果
+        context: context.toJSON(),  // 包含所有 agent 的输出
       });
 
       this.tracker.recordEvent('workflow:complete', {
@@ -208,15 +252,26 @@ export class WorkflowOrchestrator extends EventEmitter {
         duration: Date.now() - context.startTime,
       });
 
-      return this.buildResult(workflow, context);
+      // 清理活动的执行上下文
+      this.activeContexts.delete(workflow.id);
+
+      return finalResult;
 
     } catch (error) {
       context.fail(error as Error);
       
-      this.emit('workflow:error', { 
-        workflowId: workflow.id, 
-        error 
-      });
+      // 检查是否为取消操作
+      if (context.isCancelled) {
+        this.emit('workflow:cancelled', { 
+          workflowId: workflow.id,
+          context: context.toJSON(),
+        });
+      } else {
+        this.emit('workflow:error', { 
+          workflowId: workflow.id, 
+          error 
+        });
+      }
 
       this.tracker.recordEvent('workflow:error', {
         workflowId: workflow.id,
@@ -228,6 +283,9 @@ export class WorkflowOrchestrator extends EventEmitter {
       } else {
         this.errorHandler.handle(error as Error, { workflow, context });
       }
+
+      // 清理活动的执行上下文
+      this.activeContexts.delete(workflow.id);
 
       return this.buildResult(workflow, context);
     }

@@ -5,9 +5,43 @@
 import type { IErrorHandler } from '../types';
 
 /**
+ * 错误类型枚举
+ */
+export enum ErrorType {
+  NETWORK = 'network',
+  TIMEOUT = 'timeout',
+  VALIDATION = 'validation',
+  EXECUTION = 'execution',
+  AGENT_NOT_FOUND = 'agent_not_found',
+  UNKNOWN = 'unknown',
+}
+
+/**
+ * 错误严重程度枚举
+ */
+export enum ErrorSeverity {
+  LOW = 'low',
+  MEDIUM = 'medium',
+  HIGH = 'high',
+  CRITICAL = 'critical',
+}
+
+/**
+ * 增强的错误信息
+ */
+export interface EnhancedError {
+  type: ErrorType;
+  severity: ErrorSeverity;
+  originalError: Error;
+  context?: any;
+  timestamp: number;
+  recoverable: boolean;
+}
+
+/**
  * 默认错误处理器
  * 
- * 提供基础的错误处理和日志记录
+ * 提供增强的错误分类、日志记录和处理策略
  */
 export class ErrorHandler implements IErrorHandler {
   /**
@@ -17,11 +51,126 @@ export class ErrorHandler implements IErrorHandler {
    * @param context 错误上下文
    */
   handle(error: Error, context?: any): void {
-    console.error('[ErrorHandler] Error occurred:', {
-      message: error.message,
-      stack: error.stack,
+    const enhancedError = this.classifyError(error, context);
+    this.logError(enhancedError);
+  }
+
+  /**
+   * 对错误进行分类
+   * 
+   * @param error 原始错误对象
+   * @param context 错误上下文
+   * @returns 增强的错误信息
+   */
+  private classifyError(error: Error, context?: any): EnhancedError {
+    let type = ErrorType.UNKNOWN;
+    let severity = ErrorSeverity.MEDIUM;
+    
+    // 错误分类逻辑
+    if (this.isNetworkError(error)) {
+      type = ErrorType.NETWORK;
+      severity = ErrorSeverity.MEDIUM;
+    } else if (this.isTimeoutError(error)) {
+      type = ErrorType.TIMEOUT;
+      severity = ErrorSeverity.LOW;
+    } else if (this.isValidationError(error)) {
+      type = ErrorType.VALIDATION;
+      severity = ErrorSeverity.HIGH;
+    } else if (this.isAgentNotFoundError(error)) {
+      type = ErrorType.AGENT_NOT_FOUND;
+      severity = ErrorSeverity.HIGH;
+    } else if (this.isExecutionError(error)) {
+      type = ErrorType.EXECUTION;
+      severity = ErrorSeverity.MEDIUM;
+    }
+    
+    return {
+      type,
+      severity,
+      originalError: error,
       context,
-    });
+      timestamp: Date.now(),
+      recoverable: this.isRetryable(error),
+    };
+  }
+
+  /**
+   * 记录错误日志（结构化格式）
+   * 
+   * @param error 增强的错误信息
+   */
+  private logError(error: EnhancedError): void {
+    const logEntry = {
+      type: error.type,
+      severity: error.severity,
+      message: error.originalError.message,
+      timestamp: new Date(error.timestamp).toISOString(),
+      recoverable: error.recoverable,
+      stack: error.originalError.stack,
+      context: error.context,
+    };
+
+    // 根据严重程度使用不同的日志级别
+    switch (error.severity) {
+      case ErrorSeverity.CRITICAL:
+      case ErrorSeverity.HIGH:
+        console.error('[ErrorHandler]', logEntry);
+        break;
+      case ErrorSeverity.MEDIUM:
+        console.warn('[ErrorHandler]', logEntry);
+        break;
+      case ErrorSeverity.LOW:
+        console.log('[ErrorHandler]', logEntry);
+        break;
+    }
+  }
+  
+  /**
+   * 判断是否为网络错误
+   */
+  private isNetworkError(error: Error): boolean {
+    const message = error.message.toLowerCase();
+    return message.includes('econnrefused') ||
+           message.includes('etimedout') ||
+           message.includes('enotfound') ||
+           message.includes('network') ||
+           message.includes('fetch failed');
+  }
+  
+  /**
+   * 判断是否为超时错误
+   */
+  private isTimeoutError(error: Error): boolean {
+    return error.message.toLowerCase().includes('timeout');
+  }
+
+  /**
+   * 判断是否为验证错误
+   */
+  private isValidationError(error: Error): boolean {
+    const message = error.message.toLowerCase();
+    return message.includes('invalid') ||
+           message.includes('validation') ||
+           message.includes('circular dependency');
+  }
+
+  /**
+   * 判断是否为 Agent 未找到错误
+   */
+  private isAgentNotFoundError(error: Error): boolean {
+    const message = error.message.toLowerCase();
+    return (message.includes('agent') && message.includes('not found')) ||
+           message.includes('no agent found');
+  }
+
+  /**
+   * 判断是否为执行错误
+   */
+  private isExecutionError(error: Error): boolean {
+    const message = error.message.toLowerCase();
+    return message.includes('execution') ||
+           message.includes('failed to execute') ||
+           message.includes('runtime error');
   }
 
   /**
@@ -31,26 +180,8 @@ export class ErrorHandler implements IErrorHandler {
    * @returns 是否可重试
    */
   isRetryable(error: Error): boolean {
-    // 网络错误通常可重试
-    if (error.message.includes('ECONNREFUSED') ||
-        error.message.includes('ETIMEDOUT') ||
-        error.message.includes('ENOTFOUND')) {
-      return true;
-    }
-
-    // 超时错误可重试
-    if (error.message.includes('timeout') ||
-        error.message.includes('Timeout')) {
-      return true;
-    }
-
-    // 临时错误可重试
-    if (error.message.includes('temporarily unavailable') ||
-        error.message.includes('try again')) {
-      return true;
-    }
-
-    return false;
+    // 网络错误和超时错误通常可重试
+    return this.isNetworkError(error) || this.isTimeoutError(error);
   }
 }
 
