@@ -1,0 +1,263 @@
+/* ============= 输入框包裹容器 ============= */
+.chat-input-wrapper {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ============= 输入框主容器 ============= */
+.chat-input-container {
+  position: relative;
+  background: var(--ant-color-bg-container);
+  border-radius: 24px;
+  padding: 4px;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.chat-input-container:hover {
+  box-shadow: 
+    0 2px 4px rgba(0, 0, 0, 0.06),
+    0 4px 16px rgba(0, 0, 0, 0.08);
+}
+
+.chat-input-container.focused {
+  box-shadow: 
+    0 4px 8px rgba(0, 0, 0, 0.08),
+    0 8px 24px rgba(24, 144, 255, 0.15);
+  transform: translateY(-1px);
+}
+
+.chat-input-container.disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+/* ============= 渐变边框效果 ============= */
+.gradient-border {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border-radius: 24px;
+  padding: 2px;
+  background: linear-gradient(
+    135deg,
+    rgba(24, 144, 255, 0) 0%,
+    rgba(24, 144, 255, 0) 100%
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.chat-input-container.focused .gradient-border {
+  background: linear-gradient(
+    135deg,
+    rgba(24, 144, 255, 0.6) 0%,
+    rgba(135, 208, 104, 0.6) 50%,
+    rgba(24, 144, 255, 0.6) 100%
+  );
+  background-size: 200% 200%;
+  animation: gradientShift 3s ease infinite;
+  opacity: 1;
+}
+
+@keyframes gradientShift {
+  0%, 100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+/* ============= 输入内容区域 ============= */
+.input-content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--ant-color-bg-container);
+  border-radius: 20px;
+}
+
+/* ============= 文本输入框 ============= */
+.chat-textarea {
+  flex: 1;
+  font-size: 15px;
+  line-height: 1.6;
+  resize: none;
+  background: transparent !important;
+}
+
+.chat-textarea::placeholder {
+  color: var(--ant-color-text-tertiary);
+  font-size: 15px;
+  transition: all 0.3s ease;
+}
+
+.chat-input-container.focused .chat-textarea::placeholder {
+  color: var(--ant-color-text-quaternary);
+  transform: translateX(4px);
+}
+
+.chat-textarea:focus {
+  box-shadow: none !important;
+}
+
+/* ============= 操作按钮区域 ============= */
+.input-actions {
+  display: flex;
+  align-items: center;
+  padding-bottom: 2px;
+  min-height: 32px;
+}
+
+.send-button {
+  border-radius: 16px !important;
+  padding: 4px 20px !important;
+  height: 38px !important;
+  font-weight: 500;
+  background: linear-gradient(135deg, #1890ff 0%, #096dd9 100%);
+  border: none;
+  box-shadow: 0 2px 8px rgba(24, 144, 255, 0.3);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  animation: slideIn 0.3s ease;
+}
+
+.send-button:hover {
+  transform: translateY(-2px) scale(1.02);
+  box-shadow: 0 4px 16px rgba(24, 144, 255, 0.4);
+  background: linear-gradient(135deg, #40a9ff 0%, #1890ff 100%);
+}
+
+.send-button:active {
+  transform: translateY(0) scale(0.98);
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* ============= 输入提示 ============= */
+.input-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ant-color-text-tertiary);
+  font-size: 13px;
+  padding: 0 8px;
+  animation: fadeIn 0.3s ease;
+}
+
+.input-hint .anticon {
+  font-size: 14px;
+  color: #faad14;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1.1);
+  }
+}
+
+/* ============= 底部提示文字 ============= */
+.input-footer {
+  padding: 0 16px;
+  text-align: center;
+}
+
+.footer-hint {
+  color: var(--ant-color-text-quaternary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* ============= 响应式设计 ============= */
+@media (max-width: 768px) {
+  .chat-input-container {
+    border-radius: 20px;
+  }
+  
+  .input-content {
+    padding: 10px 12px;
+    border-radius: 16px;
+  }
+  
+  .chat-textarea {
+    font-size: 14px;
+  }
+  
+  .send-button {
+    padding: 4px 16px !important;
+    height: 36px !important;
+    font-size: 14px;
+  }
+  
+  .input-hint {
+    font-size: 12px;
+  }
+}
+
+/* ============= 暗色主题适配 ============= */
+@media (prefers-color-scheme: dark) {
+  .chat-input-container {
+    box-shadow: 
+      0 1px 2px rgba(0, 0, 0, 0.2),
+      0 2px 8px rgba(0, 0, 0, 0.3);
+  }
+  
+  .chat-input-container:hover {
+    box-shadow: 
+      0 2px 4px rgba(0, 0, 0, 0.25),
+      0 4px 16px rgba(0, 0, 0, 0.35);
+  }
+  
+  .chat-input-container.focused {
+    box-shadow: 
+      0 4px 8px rgba(0, 0, 0, 0.3),
+      0 8px 24px rgba(24, 144, 255, 0.25);
+  }
+  
+  .send-button {
+    box-shadow: 0 2px 8px rgba(24, 144, 255, 0.4);
+  }
+  
+  .send-button:hover {
+    box-shadow: 0 4px 16px rgba(24, 144, 255, 0.5);
+  }
+}
+
