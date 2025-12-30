@@ -14,7 +14,21 @@ export { IntentType, type IntentRecognitionResult };
 /**
  * Chat Agent 配置
  */
-export interface ChatAgentConfig extends Partial<BaseAgentConfig> {
+export interface ChatAgentConfig {
+  /** Agent ID */
+  id?: string;
+  /** Agent 名称 */
+  name?: string;
+  /** Agent 描述 */
+  description?: string;
+  /** Agent 能力列表 */
+  capabilities?: string[];
+  /** 最大迭代次数 */
+  maxIterations?: number;
+  /** 上下文压缩配置 */
+  contextCompression?: BaseAgentConfig['contextCompression'];
+  /** 系统提示词 */
+  systemPrompt?: string;
   /** 
    * 获取可用 Agent 信息的函数
    * 由外部（如 WorkflowOrchestrator）提供

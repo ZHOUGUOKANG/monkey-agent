@@ -10,9 +10,12 @@ export default defineConfig({
       exclude: ['src/**/*.test.ts'],
       outDir: 'dist',
       entryRoot: 'src',
+      staticImport: true,
+      rollupTypes: true,
       compilerOptions: {
         composite: false,
         skipLibCheck: true,
+        declarationMap: true,
       },
     }),
   ],

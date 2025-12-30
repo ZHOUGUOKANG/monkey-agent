@@ -10,6 +10,7 @@ export default defineConfig({
       exclude: ['src/**/*.test.ts'],
       outDir: 'dist',
       entryRoot: 'src',
+      staticImport: true,
       compilerOptions: {
         composite: false,
         skipLibCheck: true,
@@ -31,6 +32,7 @@ export default defineConfig({
         '@monkey-agent/types',
         '@monkey-agent/utils',
         '@monkey-agent/context',
+        '@monkey-agent/orchestrator',
         '@e2b/code-interpreter',
         'robotjs',
         'ai',

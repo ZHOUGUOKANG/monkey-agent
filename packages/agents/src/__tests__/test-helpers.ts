@@ -1,6 +1,6 @@
 import type { ILLMClient } from '@monkey-agent/types';
 import type { Page, Browser } from 'playwright';
-import { vi } from 'vitest';
+import { vi, expect } from 'vitest';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';

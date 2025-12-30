@@ -178,6 +178,31 @@ export abstract class BaseAgent extends EventEmitter implements IAgent {
         ...data
       });
     });
+
+    // 新增：转发 tool-input 事件
+    // react:tool-input-start → agent:tool-input-start
+    this.reactLoop.on('react:tool-input-start', (data: any) => {
+      this.emit('agent:tool-input-start', {
+        agentId: this.id,
+        ...data
+      });
+    });
+
+    // react:tool-input-progress → agent:tool-input-progress
+    this.reactLoop.on('react:tool-input-progress', (data: any) => {
+      this.emit('agent:tool-input-progress', {
+        agentId: this.id,
+        ...data
+      });
+    });
+
+    // react:tool-input-complete → agent:tool-input-complete
+    this.reactLoop.on('react:tool-input-complete', (data: any) => {
+      this.emit('agent:tool-input-complete', {
+        agentId: this.id,
+        ...data
+      });
+    });
   }
 
   /**

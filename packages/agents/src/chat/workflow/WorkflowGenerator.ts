@@ -7,7 +7,7 @@
 import type { ILLMClient, Workflow } from '@monkey-agent/types';
 import { DAGValidator } from '@monkey-agent/orchestrator';
 import { tool } from 'ai';
-import { workflowSchema, agentNodeSchema } from './schema';
+import { workflowSchema } from './schema';
 import { buildWorkflowPrompt } from '../prompts/workflow';
 
 export interface AgentInfo {

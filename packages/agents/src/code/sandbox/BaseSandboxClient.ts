@@ -71,7 +71,7 @@ export interface OutputChunk {
  */
 export abstract class BaseSandboxClient {
   protected _sandbox_id: string | null = null;
-  protected readonly DEFAULT_TIMEOUT = 60_000; // 60 seconds
+  protected readonly DEFAULT_TIMEOUT = 300_000; // 300 seconds (5 minutes)
 
   /**
    * 获取当前 Sandbox ID

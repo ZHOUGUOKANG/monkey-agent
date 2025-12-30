@@ -26,7 +26,13 @@ import type { ClientMessage, ChatPayload, WorkflowPayload } from './dto/message.
 @WebSocketGateway({ 
   cors: {
     origin: '*', // 开发环境，生产环境需要配置
-  }
+  },
+  // WebSocket 稳定性配置
+  pingTimeout: 120000,       // 2 分钟无响应才断开（默认 60s）
+  pingInterval: 25000,       // 每 25 秒发送 ping（默认 25s）
+  maxHttpBufferSize: 1e8,    // 100MB 缓冲区（默认 1MB）
+  connectTimeout: 45000,     // 连接超时 45s
+  transports: ['websocket', 'polling'],  // 支持两种传输方式
 })
 export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
@@ -41,12 +47,209 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
     isFirstChunk: boolean;
     accumulatedCode: string;
   }>();
+  
+  // Stream-text 批量缓冲器 - 减少网络请求
+  private streamBuffers = new Map<string, {
+    chunks: string[];
+    timer: NodeJS.Timeout | null;
+    lastFlush: number;
+  }>();
+  
+  // 事件节流器 - 针对高频事件进行节流
+  private eventThrottlers = new Map<string, {
+    lastSent: number;
+    pending: any;
+    timer: NodeJS.Timeout | null;
+  }>();
+  
+  // 高频事件类型列表
+  private readonly HIGH_FREQUENCY_EVENTS = new Set([
+    'agent:stream-text',
+    'agent:tool-input-progress',
+    'agent:thinking'
+  ]);
 
   constructor(private readonly agentAdapter: AgentAdapter) {
     // 在构造函数中记录日志配置状态
     if (this.loggingEnabled) {
       this.logger.log('📝 Workflow logging is ENABLED');
     }
+  }
+  
+  /**
+   * 批量发送 stream-text 事件 - 减少网络请求
+   * @param client Socket 客户端
+   * @param id 请求 ID
+   * @param chunk 文本片段
+   * @param flushInterval 刷新间隔（毫秒），默认 50ms
+   */
+  private bufferStreamText(
+    client: Socket,
+    id: string,
+    chunk: string,
+    flushInterval = 50
+  ) {
+    const key = `${client.id}-${id}`;
+    const buffer = this.streamBuffers.get(key) || {
+      chunks: [],
+      timer: null,
+      lastFlush: Date.now()
+    };
+    
+    buffer.chunks.push(chunk);
+    
+    // 如果有待发送的定时器，清除它
+    if (buffer.timer) {
+      clearTimeout(buffer.timer);
+    }
+    
+    // 检查是否需要立即刷新
+    const now = Date.now();
+    const shouldFlushNow = 
+      buffer.chunks.length >= 10 ||  // 累积 10 个 chunk
+      (now - buffer.lastFlush) >= 200;  // 或超过 200ms
+    
+    if (shouldFlushNow) {
+      // 立即发送
+      const merged = buffer.chunks.join('');
+      client.emit('stream', {
+        id,
+        payload: { 
+          type: 'text',
+          content: merged
+        }
+      });
+      buffer.chunks = [];
+      buffer.lastFlush = now;
+      this.streamBuffers.set(key, buffer);
+    } else {
+      // 延迟发送
+      buffer.timer = setTimeout(() => {
+        if (buffer.chunks.length > 0) {
+          const merged = buffer.chunks.join('');
+          client.emit('stream', {
+            id,
+            payload: { 
+              type: 'text',
+              content: merged
+            }
+          });
+          buffer.chunks = [];
+          buffer.lastFlush = Date.now();
+        }
+        this.streamBuffers.delete(key);
+      }, flushInterval);
+      
+      this.streamBuffers.set(key, buffer);
+    }
+  }
+  
+  /**
+   * 强制刷新指定 stream 的缓冲区
+   */
+  private flushStreamBuffer(client: Socket, id: string) {
+    const key = `${client.id}-${id}`;
+    const buffer = this.streamBuffers.get(key);
+    
+    if (buffer) {
+      if (buffer.timer) {
+        clearTimeout(buffer.timer);
+      }
+      
+      if (buffer.chunks.length > 0) {
+        const merged = buffer.chunks.join('');
+        client.emit('stream', {
+          id,
+          payload: { 
+            type: 'text',
+            content: merged
+          }
+        });
+      }
+      
+      this.streamBuffers.delete(key);
+    }
+  }
+  
+  /**
+   * 节流事件发送 - 针对高频事件
+   * @param client Socket 客户端
+   * @param eventType 事件类型
+   * @param event 事件数据
+   * @param id 请求 ID
+   * @param interval 节流间隔（毫秒）
+   */
+  private throttleEvent(
+    client: Socket, 
+    eventType: string, 
+    event: any, 
+    id: string,
+    interval = 100
+  ) {
+    const key = `${client.id}-${eventType}-${id}`;
+    const throttler = this.eventThrottlers.get(key) || {
+      lastSent: 0,
+      pending: null,
+      timer: null
+    };
+    
+    const now = Date.now();
+    throttler.pending = event;
+    
+    if (now - throttler.lastSent >= interval) {
+      // 立即发送
+      client.emit('workflow:event', { id, event });
+      throttler.lastSent = now;
+      throttler.pending = null;
+    } else if (!throttler.timer) {
+      // 设置延迟发送
+      throttler.timer = setTimeout(() => {
+        if (throttler.pending) {
+          client.emit('workflow:event', { id, event: throttler.pending });
+          throttler.lastSent = Date.now();
+          throttler.pending = null;
+        }
+        throttler.timer = null;
+        this.eventThrottlers.delete(key); // 清理
+      }, interval - (now - throttler.lastSent));
+    }
+    
+    this.eventThrottlers.set(key, throttler);
+  }
+  
+  /**
+   * 清理客户端的所有节流器和缓冲区
+   */
+  private clearThrottlersForClient(clientId: string) {
+    // 清理节流器
+    const keysToDelete: string[] = [];
+    this.eventThrottlers.forEach((_, key) => {
+      if (key.startsWith(clientId)) {
+        keysToDelete.push(key);
+      }
+    });
+    keysToDelete.forEach(key => {
+      const throttler = this.eventThrottlers.get(key);
+      if (throttler?.timer) {
+        clearTimeout(throttler.timer);
+      }
+      this.eventThrottlers.delete(key);
+    });
+    
+    // 清理 stream buffers
+    const bufferKeysToDelete: string[] = [];
+    this.streamBuffers.forEach((_, key) => {
+      if (key.startsWith(clientId)) {
+        bufferKeysToDelete.push(key);
+      }
+    });
+    bufferKeysToDelete.forEach(key => {
+      const buffer = this.streamBuffers.get(key);
+      if (buffer?.timer) {
+        clearTimeout(buffer.timer);
+      }
+      this.streamBuffers.delete(key);
+    });
   }
   
   /**
@@ -74,6 +277,8 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   handleDisconnect(client: Socket) {
     this.logger.log(`Client disconnected: ${client.id}`);
+    // 清理该客户端的所有节流器
+    this.clearThrottlersForClient(client.id);
   }
 
   /**
@@ -100,7 +305,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
       
       // 调用 AgentAdapter 的流式版本
       const result = await this.agentAdapter.chatWithStreaming(payload, {
-        // 流式文本回调
+        // 流式文本回调 - 使用批量发送
         onStreamChunk: (chunk: string) => {
           // 判断是否为代码（简单判断：包含 'import React' 的视为代码）
           const isCode = chunk.includes('import React') || chunk.includes('<!DOCTYPE html') || streamState.accumulatedCode.includes('import React');
@@ -112,16 +317,20 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
             cleanedChunk = this.cleanStreamedCode(chunk, streamState.isFirstChunk);
             streamState.isFirstChunk = false;
             streamState.accumulatedCode += cleanedChunk;
+            
+            // 代码类型直接发送（不批量），保持实时性
+            client.emit('stream', {
+              id,
+              payload: { 
+                type,
+                content: cleanedChunk,
+                artifactId: type === 'code' || type === 'html' ? 'streaming-artifact' : undefined
+              }
+            });
+          } else {
+            // 文本类型使用批量发送
+            this.bufferStreamText(client, id, cleanedChunk);
           }
-          
-          client.emit('stream', {
-            id,
-            payload: { 
-              type,
-              content: cleanedChunk,
-              artifactId: type === 'code' || type === 'html' ? 'streaming-artifact' : undefined
-            }
-          });
         },
         // Agent 事件回调 - 转发所有重要事件
         onEvent: (event: any) => {
@@ -225,6 +434,9 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
           });
         }
         
+        // 刷新缓冲区，确保所有文本都已发送
+        this.flushStreamBuffer(client, id);
+        
         const responsePayload = { 
           id, 
           payload: {
@@ -242,6 +454,9 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
         this.logger.log(`Artifact generated for chat ${id}`);
         this.logger.debug(`Artifact details: ${JSON.stringify(result.artifact, null, 2)}`);
         
+        // 刷新缓冲区
+        this.flushStreamBuffer(client, id);
+        
         client.emit('response', { 
           id, 
           payload: {
@@ -254,19 +469,31 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
       } else if (result.type === 'text') {
         // 简单对话 → 最后发送 done 信号
         this.logger.log(`Text response for chat ${id} completed`);
+        
+        // 刷新缓冲区
+        this.flushStreamBuffer(client, id);
+        
         client.emit('response', { id, payload: { done: true } });
       } else {
         // 未知类型，记录日志
         this.logger.warn(`Unknown result type from chat: ${JSON.stringify(result)}`);
+        
+        // 刷新缓冲区
+        this.flushStreamBuffer(client, id);
+        
         client.emit('response', { id, payload: { done: true } });
       }
       
-      // 清理代码流状态
+      // 清理代码流状态和缓冲区
       this.codeStreamStates.delete(id);
     } catch (error: any) {
       this.logger.error(`Chat error: ${error.message}`);
+      
+      // 刷新缓冲区
+      this.flushStreamBuffer(client, id);
+      
       client.emit('error', { id, payload: { error: error.message } });
-      // 清理代码流状态
+      // 清理代码流状态和缓冲区
       this.codeStreamStates.delete(id);
     }
   }
@@ -382,15 +609,15 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
           });
           workflowLogger?.log('agent:warning', event);
         },
-        // 转发思考文本流式事件
+        // 转发思考文本流式事件 - 使用节流
         'agent:stream-text': (event: any) => {
           const textPreview = event.textDelta?.substring(0, 50) || '';
           this.logger.debug(`Agent stream text: ${textPreview}${textPreview.length >= 50 ? '...' : ''}`);
           const { type, ...eventData } = event;
-          client.emit('workflow:event', { 
-            id, 
-            event: { type: 'agent:stream-text', ...eventData } 
-          });
+          
+          // 使用节流机制，每 100ms 最多发送一次
+          this.throttleEvent(client, 'agent:stream-text', { type: 'agent:stream-text', ...eventData }, id, 100);
+          
           workflowLogger?.log('agent:stream-text', event);
         },
         'agent:stream-finish': (event: any) => {
@@ -438,6 +665,34 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
           });
           workflowLogger?.log('agent:task-complete', event);
         },
+        // 新增：转发 tool-input 事件（流式显示 LLM 生成参数的过程）
+        'agent:tool-input-start': (event: any) => {
+          this.logger.debug(`Agent tool input start: ${event.toolName}`);
+          const { type, ...eventData } = event;
+          client.emit('workflow:event', { 
+            id, 
+            event: { type: 'agent:tool-input-start', ...eventData } 
+          });
+          workflowLogger?.log('agent:tool-input-start', event);
+        },
+        'agent:tool-input-progress': (event: any) => {
+          // 流式发送进度更新（高频事件，使用节流机制）
+          const { type, ...eventData } = event;
+          
+          // 使用节流机制，每 150ms 最多发送一次
+          this.throttleEvent(client, 'agent:tool-input-progress', { type: 'agent:tool-input-progress', ...eventData }, id, 150);
+          
+          // 不记录到文件日志（太频繁）
+        },
+        'agent:tool-input-complete': (event: any) => {
+          this.logger.debug(`Agent tool input complete: ${event.toolName}, ${event.charCount} chars in ${event.duration}ms`);
+          const { type, ...eventData } = event;
+          client.emit('workflow:event', { 
+            id, 
+            event: { type: 'agent:tool-input-complete', ...eventData } 
+          });
+          workflowLogger?.log('agent:tool-input-complete', event);
+        },
       };
       
       // 注册事件监听器
@@ -463,6 +718,13 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
       
       this.logger.log(`Workflow ${payload.workflow.id} completed: ${result.status}`);
+      
+      // 确保始终返回 response（即使有部分错误）
+      if (!result.status) {
+        this.logger.warn('Workflow result missing status, defaulting to "completed"');
+        result.status = 'completed';
+      }
+      
       client.emit('response', { id, payload: result });
       
       // 关闭日志记录器
@@ -530,6 +792,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
         payload.error,
         {
           onStreamChunk: (chunk: string) => {
+            // HTML 代码直接发送（不批量），保持实时性
             client.emit('stream', {
               id,
               payload: { 
@@ -541,6 +804,9 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect {
           }
         }
       );
+      
+      // 刷新缓冲区（虽然 HTML 不批量，但以防万一）
+      this.flushStreamBuffer(client, id);
       
       // 发送最终的 HTML artifact
       client.emit('response', {

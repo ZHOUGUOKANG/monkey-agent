@@ -1,6 +1,7 @@
 import React from 'react';
 import { Typography, Button, message } from 'antd';
 import { CopyOutlined } from '@ant-design/icons';
+import { IntentRecognitionCard } from './IntentRecognitionCard';
 
 const { Paragraph } = Typography;
 
@@ -37,6 +38,11 @@ interface EventDetailFormatterProps {
 
 export const EventDetailFormatter: React.FC<EventDetailFormatterProps> = ({ eventType, data }) => {
   if (!data) return null;
+
+  // 意图识别结果：使用专门的卡片组件
+  if (eventType === 'agent:tool-result' && data.toolName === 'recognizeIntent' && data.result) {
+    return <IntentRecognitionCard result={data.result} />;
+  }
 
   // 反思事件：显示反思内容
   if (eventType === 'agent:reflection' && data.reflection) {

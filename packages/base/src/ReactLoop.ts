@@ -130,14 +130,66 @@ export class ReactLoop extends EventEmitter {
 
           // 收集流式数据
           let fullText = '';
-          let toolCalls: any[] = [];
+          const toolCalls: any[] = [];
           let finishReason: string | undefined;
+
+          // 跟踪正在接收的工具参数
+          const pendingToolInputs = new Map<string, {
+            toolName: string;
+            buffer: string;
+            charCount: number;
+            startTime: number;
+          }>();
 
           // 遍历完整事件流
           for await (const part of streamResult.fullStream) {
             logger.stream(part);
             
-            if (part.type === 'text-delta') {
+            // 调试：记录所有事件类型
+            if (part.type.includes('tool')) {
+              logger.debug(`🔧 Tool event: ${part.type}`, {
+                type: part.type,
+                toolName: (part as any).toolName,
+                hasId: !!(part as any).id || !!(part as any).toolCallId
+              });
+            }
+            
+            // 1. 工具参数开始接收
+            if (part.type === 'tool-input-start') {
+              pendingToolInputs.set(part.id, {
+                toolName: part.toolName,
+                buffer: '',
+                charCount: 0,
+                startTime: Date.now()
+              });
+              
+              this.emitEvent('react:tool-input-start', {
+                id: part.id,
+                toolName: part.toolName,
+                iteration
+              });
+            }
+            
+            // 2. 工具参数增量接收（流式）
+            else if (part.type === 'tool-input-delta') {
+              const input = pendingToolInputs.get(part.id);
+              if (input && part.delta) {
+                input.buffer += part.delta;
+                input.charCount += part.delta.length;
+                
+                // 实时发送每个 delta 事件（只发送增量）
+                this.emitEvent('react:tool-input-progress', {
+                  id: part.id,
+                  toolName: input.toolName,
+                  charCount: input.charCount,
+                  delta: part.delta, // 只发送增量
+                  iteration
+                });
+              }
+            }
+            
+            // 3. 文本增量
+            else if (part.type === 'text-delta') {
               const textDelta = (part as any).text ?? part.textDelta ?? '';
               if (textDelta) {
                 fullText += textDelta;
@@ -147,11 +199,30 @@ export class ReactLoop extends EventEmitter {
                 });
                 options.onStreamChunk?.(textDelta);
               }
-            } else if (part.type === 'tool-call') {
+            } 
+            
+            // 4. 工具参数接收完成
+            else if (part.type === 'tool-call') {
+              const input = pendingToolInputs.get(part.toolCallId);
+              if (input) {
+                const duration = Date.now() - input.startTime;
+                
+                // 发送最终完成事件
+                this.emitEvent('react:tool-input-complete', {
+                  id: part.toolCallId,
+                  toolName: part.toolName,
+                  charCount: input.charCount,
+                  duration,
+                  iteration
+                });
+                
+                pendingToolInputs.delete(part.toolCallId);
+              }
+              
               toolCalls.push({
                 toolCallId: part.toolCallId,
                 toolName: part.toolName,
-                input: part.input
+                input: (part as any).args ?? part.input  // 使用 part.args
               });
             } else if (part.type === 'finish') {
               finishReason = part.finishReason;

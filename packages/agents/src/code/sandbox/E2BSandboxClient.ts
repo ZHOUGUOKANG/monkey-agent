@@ -1,5 +1,5 @@
 import { Sandbox } from '@e2b/code-interpreter';
-import type { Execution, Result, ExecutionError, OutputMessage } from '@e2b/code-interpreter';
+import type { Result, ExecutionError, OutputMessage } from '@e2b/code-interpreter';
 import {
   BaseSandboxClient,
   CommandResult,
@@ -100,8 +100,10 @@ export class E2BSandboxClient extends BaseSandboxClient {
     const fs = await import('fs/promises');
     const content = await fs.readFile(local_path);
 
-    // 写入到 Sandbox
-    await this._sandbox!.files.write(remote_path, content);
+    // 写入到 Sandbox - 使用 string 或 ArrayBuffer
+    // 如果是二进制文件，转换为 base64 字符串
+    const contentStr = content.toString('utf-8');
+    await this._sandbox!.files.write(remote_path, contentStr);
   }
 
   /**
@@ -110,7 +112,7 @@ export class E2BSandboxClient extends BaseSandboxClient {
   async downloadFile(remote_path: string): Promise<Uint8Array> {
     this._ensureSandboxCreated();
 
-    const content = await this._sandbox!.files.read(remote_path, 'bytes');
+    const content = await this._sandbox!.files.read(remote_path, { format: 'bytes' });
     
     // 确保返回 Uint8Array
     if (typeof content === 'string') {
@@ -212,13 +214,12 @@ export class E2BSandboxClient extends BaseSandboxClient {
    */
   private async *_runCommandStream(command: string): AsyncIterableIterator<OutputChunk> {
     try {
-      let hasOutput = false;
       const process = await this._sandbox!.commands.run(command, {
-        onStdout: (output) => {
-          hasOutput = true;
+        onStdout: (_output) => {
+          // 输出已记录
         },
-        onStderr: (output) => {
-          hasOutput = true;
+        onStderr: (_output) => {
+          // 错误输出已记录
         },
         timeoutMs: this.DEFAULT_TIMEOUT,
       });

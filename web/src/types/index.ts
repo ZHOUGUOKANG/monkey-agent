@@ -78,6 +78,7 @@ export interface ToolCallData {
   result?: any;
   error?: string;
   timestamp: number;
+  toolCallId?: string; // 新增：工具调用的唯一标识符，用于匹配 toolInput
 }
 
 // 单个迭代的数据

@@ -68,6 +68,9 @@ export class WorkflowOrchestrator extends EventEmitter {
     this.executor.on('agent:max-iterations', (data) => this.emit('agent:max-iterations', data));
     this.executor.on('agent:reflection', (data) => this.emit('agent:reflection', data));
     this.executor.on('agent:task-complete', (data) => this.emit('agent:task-complete', data));
+    this.executor.on('agent:tool-input-start', (data) => this.emit('agent:tool-input-start', data));
+    this.executor.on('agent:tool-input-progress', (data) => this.emit('agent:tool-input-progress', data));
+    this.executor.on('agent:tool-input-complete', (data) => this.emit('agent:tool-input-complete', data));
   }
 
   /**

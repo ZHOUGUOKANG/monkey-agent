@@ -3,6 +3,7 @@ import { Empty } from 'antd';
 import { MessageBubble } from './MessageBubble';
 import { WorkflowCard } from './WorkflowCard';
 import { WorkflowExecutionStatus } from './WorkflowExecutionStatus';
+import { ToolInputProgress } from './ToolInputProgress';
 import { useChatStore } from '../../stores/chatStore';
 import type { Message, Workflow } from '../../types';
 
@@ -16,6 +17,7 @@ export const MessageList: React.FC<MessageListProps> = ({ messages, onRunWorkflo
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const workflowExecution = useChatStore((state) => state.workflowExecution);
   const currentWorkflow = useChatStore((state) => state.currentWorkflow);
+  const toolInputs = useChatStore((state) => state.toolInputs);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -23,7 +25,7 @@ export const MessageList: React.FC<MessageListProps> = ({ messages, onRunWorkflo
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, workflowExecution]);
+  }, [messages, workflowExecution, toolInputs]);
 
   if (messages.length === 0) {
     return (
@@ -58,6 +60,22 @@ export const MessageList: React.FC<MessageListProps> = ({ messages, onRunWorkflo
             {message.workflow && <WorkflowCard workflow={message.workflow} onRun={onRunWorkflow} />}
           </div>
         ))}
+        
+        {/* 显示工具参数接收进度 */}
+        {toolInputs.size > 0 && (
+          <div style={{ marginTop: '16px' }}>
+            {Array.from(toolInputs.values()).map((input) => (
+              <ToolInputProgress
+                key={input.id}
+                toolName={input.toolName}
+                charCount={input.charCount}
+                fullContent={input.fullContent}
+                status={input.status}
+                duration={input.duration}
+              />
+            ))}
+          </div>
+        )}
         
         {/* 显示工作流执行状态 */}
         {workflowExecution && currentWorkflow && (

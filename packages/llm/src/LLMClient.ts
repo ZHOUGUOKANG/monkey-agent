@@ -241,21 +241,25 @@ export class LLMClient implements LLMProvider, ILLMClient {
     this.providerConfig = { ...config, providerConfig };
     
     switch (provider) {
-      case 'openai':
+      case 'openai': {
         const openai = createOpenAI(providerConfig);
         return openai(model);
+      }
       
-      case 'anthropic':
+      case 'anthropic': {
         const anthropic = createAnthropic(providerConfig);
         return anthropic(model);
+      }
       
-      case 'google':
+      case 'google': {
         const google = createGoogleGenerativeAI(providerConfig);
         return google(model);
+      }
       
-      case 'openrouter':
+      case 'openrouter': {
         const openrouter = createOpenRouter(providerConfig);
         return openrouter(model);
+      }
       
       case 'bedrock': {
         // Amazon Bedrock 使用 AWS 凭证而非 API key
@@ -291,9 +295,10 @@ export class LLMClient implements LLMProvider, ILLMClient {
         return vertex(model);
       }
       
-      case 'deepseek':
+      case 'deepseek': {
         const deepseek = createDeepSeek(providerConfig);
         return deepseek(model);
+      }
       
       default:
         throw new Error(

@@ -58,7 +58,9 @@ Examples:
 
 Use this to discover what data is available from previous agents.
 Returns an array of key names.`,
-      inputSchema: z.object({}),
+      inputSchema: z.object({
+        _dummy: z.boolean().optional().describe('Internal parameter, always omit this'),
+      }),
     }),
   };
 }

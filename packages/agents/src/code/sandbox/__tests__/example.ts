@@ -44,7 +44,7 @@ async function main() {
     await client.create('base', 'example-user', 'example-task', {
       example: 'true',
     });
-    console.log(`✅ Sandbox 已创建: ${client.sandbox_id}\n`);
+    console.log(`✅ Sandbox 已创建: ${client.sandboxId}\n`);
 
     // 2. 执行简单命令
     console.log('🔧 执行 Shell 命令...');

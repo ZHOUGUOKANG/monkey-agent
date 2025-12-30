@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Card, Timeline, Tag, Space, Typography, Progress, Button, Divider, Alert } from 'antd';
 import { 
   ClockCircleOutlined, 
@@ -16,6 +16,8 @@ import type { Workflow, ExecutionEvent, IterationData } from '../../types';
 import { WorkflowDiagram } from './WorkflowDiagram';
 import { EventDetailFormatter } from './EventDetailFormatter';
 import { WorkflowSummary } from './WorkflowSummary';
+import { ToolInputProgress } from './ToolInputProgress';
+import { useChatStore } from '../../stores/chatStore';
 
 const { Text } = Typography;
 
@@ -40,6 +42,19 @@ export const WorkflowExecutionStatus: React.FC<WorkflowExecutionStatusProps> = (
   startTime,
   iterations,
 }) => {
+  // 使用selector只订阅必要的数据，减少不必要的重渲染
+  const toolInputs = useChatStore((state) => state.toolInputs);
+  
+  // 使用useMemo缓存正在接收的工具输入，避免每次渲染都遍历
+  const receivingToolInputs = useMemo(() => {
+    const receiving = new Map<string, any>();
+    toolInputs.forEach((input, id) => {
+      // 使用 id（即 toolCallId）作为键，不再使用 toolName
+      receiving.set(id, input);
+    });
+    return receiving;
+  }, [toolInputs]);
+  
   console.log('🔍 WorkflowExecutionStatus render:', {
     workflowId: workflow.id,
     totalEvents: events.length,
@@ -271,47 +286,66 @@ export const WorkflowExecutionStatus: React.FC<WorkflowExecutionStatusProps> = (
                           )}
                           
                           {/* 工具调用和结果 */}
-                          {iteration.toolCalls.map((toolCall, tcIdx) => (
-                            <div key={tcIdx}>
-                              {tcIdx > 0 && <Divider style={{ margin: '12px 0' }} />}
-                              
-                              <Space direction="vertical" style={{ width: '100%' }} size={8}>
-                                {/* 工具调用 */}
-                                <div>
-                                  <Space size={4}>
-                                    <ToolOutlined style={{ color: '#13c2c2' }} />
-                                    <Text strong style={{ fontSize: 12 }}>
-                                      调用工具: {toolCall.toolName}
-                                    </Text>
-                                  </Space>
-                                  <EventDetailFormatter 
-                                    eventType="agent:tool-call" 
-                                    data={{ toolName: toolCall.toolName, input: toolCall.input }} 
-                                  />
-                                </div>
+                          {iteration.toolCalls.map((toolCall, tcIdx) => {
+                            // 使用 toolCallId 匹配正在接收的 input
+                            const toolInputEntry = toolCall.toolCallId ? receivingToolInputs.get(toolCall.toolCallId) : null;
+                            const isReceiving = !!toolInputEntry;
+                            
+                            return (
+                              <div key={`iter-${iteration.iteration}-tool-${tcIdx}-${toolCall.toolCallId || toolCall.toolName}`}>
+                                {tcIdx > 0 && <Divider style={{ margin: '12px 0' }} />}
                                 
-                                {/* 工具结果或错误 */}
-                                {(toolCall.result || toolCall.error) && (
+                                <Space direction="vertical" style={{ width: '100%' }} size={8}>
+                                  {/* 工具调用 */}
                                   <div>
                                     <Space size={4}>
-                                      {toolCall.error ? (
-                                        <CloseCircleOutlined style={{ color: '#ff4d4f' }} />
-                                      ) : (
-                                        <CheckCircleOutlined style={{ color: '#52c41a' }} />
-                                      )}
+                                      <ToolOutlined style={{ color: '#13c2c2' }} />
                                       <Text strong style={{ fontSize: 12 }}>
-                                        {toolCall.error ? '工具错误' : '工具结果'}
+                                        调用工具: {toolCall.toolName}
                                       </Text>
                                     </Space>
-                                    <EventDetailFormatter 
-                                      eventType={toolCall.error ? "agent:tool-error" : "agent:tool-result"} 
-                                      data={{ toolName: toolCall.toolName, result: toolCall.result, error: toolCall.error }} 
-                                    />
+                                    
+                                    {/* 条件渲染：正在接收时显示进度，否则显示完整参数 */}
+                                    {isReceiving ? (
+                                      <ToolInputProgress
+                                        toolName={toolInputEntry.toolName}
+                                        charCount={toolInputEntry.charCount}
+                                        fullContent={toolInputEntry.fullContent}
+                                        status={toolInputEntry.status}
+                                        duration={toolInputEntry.duration}
+                                        compact={true}
+                                      />
+                                    ) : (
+                                      <EventDetailFormatter 
+                                        eventType="agent:tool-call" 
+                                        data={{ toolName: toolCall.toolName, input: toolCall.input }} 
+                                      />
+                                    )}
                                   </div>
-                                )}
-                              </Space>
-                            </div>
-                          ))}
+                                  
+                                  {/* 工具结果或错误 */}
+                                  {(toolCall.result || toolCall.error) && (
+                                    <div>
+                                      <Space size={4}>
+                                        {toolCall.error ? (
+                                          <CloseCircleOutlined style={{ color: '#ff4d4f' }} />
+                                        ) : (
+                                          <CheckCircleOutlined style={{ color: '#52c41a' }} />
+                                        )}
+                                        <Text strong style={{ fontSize: 12 }}>
+                                          {toolCall.error ? '工具错误' : '工具结果'}
+                                        </Text>
+                                      </Space>
+                                      <EventDetailFormatter 
+                                        eventType={toolCall.error ? "agent:tool-error" : "agent:tool-result"} 
+                                        data={{ toolName: toolCall.toolName, result: toolCall.result, error: toolCall.error }} 
+                                      />
+                                    </div>
+                                  )}
+                                </Space>
+                              </div>
+                            );
+                          })}
                         </Card>
                       ))}
                       

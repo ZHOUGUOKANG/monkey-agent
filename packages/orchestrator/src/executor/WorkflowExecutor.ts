@@ -170,6 +170,28 @@ export class WorkflowExecutor extends EventEmitter implements IExecutor {
         });
       };
 
+      // 新增：tool-input 事件监听器（流式显示 LLM 生成工具参数）
+      const toolInputStartListener = (data: any) => {
+        this.emit('agent:tool-input-start', {
+          ...data,
+          nodeId: agentNode.id
+        });
+      };
+
+      const toolInputProgressListener = (data: any) => {
+        this.emit('agent:tool-input-progress', {
+          ...data,
+          nodeId: agentNode.id
+        });
+      };
+
+      const toolInputCompleteListener = (data: any) => {
+        this.emit('agent:tool-input-complete', {
+          ...data,
+          nodeId: agentNode.id
+        });
+      };
+
       agent.on('agent:thinking', thinkingListener);
       agent.on('agent:tool-call', toolCallListener);
       agent.on('agent:tool-result', toolResultListener);
@@ -180,6 +202,9 @@ export class WorkflowExecutor extends EventEmitter implements IExecutor {
       agent.on('agent:stream-finish', streamFinishListener);
       agent.on('agent:context-length-error', contextLengthErrorListener);
       agent.on('agent:max-iterations', maxIterationsListener);
+      agent.on('agent:tool-input-start', toolInputStartListener);
+      agent.on('agent:tool-input-progress', toolInputProgressListener);
+      agent.on('agent:tool-input-complete', toolInputCompleteListener);
       agent.on('task:complete', taskCompleteListener);
       agent.on('task:reflect', reflectionListener);
 
@@ -220,19 +245,41 @@ export class WorkflowExecutor extends EventEmitter implements IExecutor {
       agent.off('agent:stream-finish', streamFinishListener);
       agent.off('agent:context-length-error', contextLengthErrorListener);
       agent.off('agent:max-iterations', maxIterationsListener);
+      agent.off('agent:tool-input-start', toolInputStartListener);
+      agent.off('agent:tool-input-progress', toolInputProgressListener);
+      agent.off('agent:tool-input-complete', toolInputCompleteListener);
       agent.off('task:complete', taskCompleteListener);
       agent.off('task:reflect', reflectionListener);
 
-      // 5. 保存结果到上下文
-      agentState.status = 'completed';
-      agentState.result = result;
-      context.setOutput(agentNode.id, result);
+      // 5. 保存结果到上下文 - 检查 agent 返回的状态
+      if (result.status === 'failed') {
+        // Agent 执行失败（没抛异常，但返回了 failed 状态）
+        agentState.status = 'failed';
+        agentState.error = result.error || new Error(result.summary || 'Agent execution failed');
+        
+        this.emit('agent:error', { 
+          nodeId: agentNode.id,
+          agentId: agentNode.id,
+          error: agentState.error,
+          summary: result.summary
+        });
+        
+        // 如果不允许继续执行，将错误向上传播
+        if (!options?.continueOnError) {
+          throw agentState.error;
+        }
+      } else {
+        // Agent 执行成功
+        agentState.status = 'completed';
+        agentState.result = result;
+        context.setOutput(agentNode.id, result);
 
-      this.emit('agent:complete', { 
-        ...result,  // 包含 duration, iterations 等信息
-        nodeId: agentNode.id,  // workflow 节点 ID（放在后面确保不被覆盖）
-        agentId: agentNode.id,  // 保持兼容
-      });
+        this.emit('agent:complete', { 
+          ...result,  // 包含 duration, iterations 等信息
+          nodeId: agentNode.id,  // workflow 节点 ID（放在后面确保不被覆盖）
+          agentId: agentNode.id,  // 保持兼容
+        });
+      }
 
     } catch (error) {
       agentState.status = 'failed';

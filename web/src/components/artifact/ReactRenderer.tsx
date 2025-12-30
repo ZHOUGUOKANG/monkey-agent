@@ -39,6 +39,15 @@ export const ReactRenderer: React.FC<ReactRendererProps> = ({
     setIsLoading(true);
 
     try {
+      // 调试：打印即将渲染的代码
+      console.log('📝 即将渲染的代码:', {
+        codeLength: code.length,
+        codePreview: code.substring(0, 200) + '...',
+        hasImports: code.includes('import React'),
+        hasRootRender: code.includes('root.render'),
+        isComplete: isCodeLikelyComplete(code)
+      });
+      
       // 创建完整的 HTML 文档
       const htmlContent = generateHTMLDocument(code);
 
@@ -61,8 +70,39 @@ export const ReactRenderer: React.FC<ReactRendererProps> = ({
 
         // 监听错误
         iframe.contentWindow?.addEventListener('error', (event) => {
-          console.error('Iframe runtime error:', event.error);
-          const errorMsg = event.error?.message || event.message || '未知渲染错误';
+          // 详细错误日志
+          console.error('🔴 Iframe runtime error:', {
+            error: event.error,
+            errorType: typeof event.error,
+            message: event.message,
+            filename: event.filename,
+            lineno: event.lineno,
+            colno: event.colno,
+            stack: event.error?.stack,
+            errorString: String(event.error),
+            errorJSON: JSON.stringify(event.error, Object.getOwnPropertyNames(event.error))
+          });
+          
+          // 提取详细错误信息
+          let errorMsg = '未知渲染错误';
+          if (event.error) {
+            if (typeof event.error === 'string') {
+              errorMsg = event.error;
+            } else if (event.error.message) {
+              errorMsg = event.error.message;
+            } else if (event.error.toString && event.error.toString() !== '[object Object]') {
+              errorMsg = event.error.toString();
+            }
+          } else if (event.message) {
+            errorMsg = event.message;
+          }
+          
+          // 添加位置信息
+          if (event.filename && event.lineno) {
+            errorMsg += ` (at ${event.filename}:${event.lineno}:${event.colno || 0})`;
+          }
+          
+          console.error('🔴 提取的错误信息:', errorMsg);
           
           setLastError(errorMsg);
           setCompileAttempts(prev => prev + 1);
@@ -115,7 +155,7 @@ export const ReactRenderer: React.FC<ReactRendererProps> = ({
       <iframe
         ref={iframeRef}
         className="w-full h-full border-0"
-        sandbox="allow-scripts"
+        sandbox="allow-scripts allow-same-origin"
         title="React Preview"
       />
     </div>
@@ -196,16 +236,47 @@ function generateHTMLDocument(code: string): string {
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   
   <script>
-    // 错误处理
+    // 增强的错误处理
     window.onerror = function(message, source, lineno, colno, error) {
-      console.error('Runtime error:', { message, source, lineno, colno, error });
-      document.getElementById('root').innerHTML = 
-        '<div style="padding: 20px; color: red; background: #fee;">'+
-        '<h2>渲染错误</h2>'+
-        '<p>' + message + '</p>'+
-        '<p>Line: ' + lineno + ', Column: ' + colno + '</p>'+
-        '</div>';
+      console.error('🔴 Runtime error details:', { 
+        message, 
+        source, 
+        lineno, 
+        colno, 
+        error,
+        errorType: typeof error,
+        errorString: String(error),
+        stack: error?.stack 
+      });
+      
+      const errorDiv = document.createElement('div');
+      errorDiv.style.cssText = 'padding: 20px; color: #dc2626; background: #fef2f2; border: 1px solid #fca5a5; border-radius: 8px; margin: 20px; font-family: monospace;';
+      errorDiv.innerHTML = 
+        '<h2 style="margin-top: 0; font-size: 18px; font-weight: 600;">⚠️ 渲染错误</h2>'+
+        '<p style="margin: 10px 0;"><strong>错误信息:</strong> ' + (message || 'Unknown error') + '</p>'+
+        (source ? '<p style="margin: 10px 0;"><strong>文件:</strong> ' + source + '</p>' : '') +
+        (lineno ? '<p style="margin: 10px 0;"><strong>位置:</strong> Line ' + lineno + ', Column ' + (colno || 0) + '</p>' : '') +
+        (error && error.stack ? '<details style="margin: 10px 0;"><summary style="cursor: pointer; font-weight: 600;">堆栈跟踪</summary><pre style="margin-top: 10px; padding: 10px; background: #fff; border: 1px solid #ddd; overflow-x: auto; font-size: 12px;">' + error.stack + '</pre></details>' : '');
+      
+      const root = document.getElementById('root');
+      if (root) {
+        root.innerHTML = '';
+        root.appendChild(errorDiv);
+      }
+      
       return true;
+    };
+    
+    // 捕获 Promise 未处理的 rejection
+    window.onunhandledrejection = function(event) {
+      console.error('🔴 Unhandled promise rejection:', event.reason);
+      window.onerror(
+        'Unhandled Promise Rejection: ' + (event.reason?.message || event.reason),
+        event.reason?.fileName || 'unknown',
+        event.reason?.lineNumber || 0,
+        event.reason?.columnNumber || 0,
+        event.reason
+      );
     };
   </script>
 </body>

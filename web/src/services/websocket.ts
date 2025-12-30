@@ -13,6 +13,16 @@ class WebSocketClient {
 
     this.socket = io(url, {
       transports: ['websocket', 'polling'],
+      // 增强稳定性配置
+      reconnection: true,              // 启用自动重连
+      reconnectionDelay: 1000,         // 首次重连延迟 1s
+      reconnectionDelayMax: 5000,      // 最大重连延迟 5s
+      reconnectionAttempts: Infinity,  // 无限重试
+      timeout: 20000,                  // 连接超时 20s
+      upgrade: true,                   // 允许升级传输方式
+      // 长连接支持
+      forceNew: false,                 // 复用现有连接
+      multiplex: true,                 // 多路复用
     });
 
     this.setupListeners();
@@ -26,9 +36,26 @@ class WebSocketClient {
       this.emit('connect');
     });
 
-    this.socket.on('disconnect', () => {
-      console.log('❌ WebSocket disconnected');
-      this.emit('disconnect');
+    this.socket.on('disconnect', (reason) => {
+      console.log('❌ WebSocket disconnected, reason:', reason);
+      this.emit('disconnect', { reason });
+    });
+    
+    this.socket.on('reconnect', (attemptNumber) => {
+      console.log(`🔄 WebSocket reconnected after ${attemptNumber} attempts`);
+      this.emit('reconnect', { attemptNumber });
+    });
+    
+    this.socket.on('reconnect_attempt', (attemptNumber) => {
+      console.log(`🔄 WebSocket reconnecting... (attempt ${attemptNumber})`);
+    });
+    
+    this.socket.on('reconnect_error', (error) => {
+      console.error('❌ WebSocket reconnect error:', error);
+    });
+    
+    this.socket.on('reconnect_failed', () => {
+      console.error('❌ WebSocket reconnect failed');
     });
 
     this.socket.on('stream', (data) => {
@@ -37,6 +64,20 @@ class WebSocketClient {
 
     this.socket.on('agent:event', (data) => {
       console.log('🔔 WebSocket received agent:event:', data);
+      
+      // 分发 tool-input 相关事件
+      switch (data.type) {
+        case 'agent:tool-input-start':
+          this.emit('tool-input-start', data);
+          break;
+        case 'agent:tool-input-progress':
+          this.emit('tool-input-progress', data);
+          break;
+        case 'agent:tool-input-complete':
+          this.emit('tool-input-complete', data);
+          break;
+      }
+      
       this.emit('agent:event', data);
     });
 
@@ -66,15 +107,36 @@ class WebSocketClient {
     });
   }
 
-  executeWorkflow(workflow: any) {
+  executeWorkflow(workflow: any, options?: {
+    /** 单个Agent执行超时时间(毫秒)，默认5分钟 */
+    agentTimeout?: number;
+    /** 整体工作流超时时间(毫秒) */
+    timeout?: number;
+    /** 失败时是否继续 */
+    continueOnError?: boolean;
+    /** 最大重试次数 */
+    maxRetries?: number;
+  }) {
     if (!this.socket?.connected) {
       console.error('WebSocket not connected');
       return;
     }
 
+    // 设置合理的默认超时
+    const executionOptions = {
+      agentTimeout: 10 * 60 * 1000,  // 默认 10 分钟
+      timeout: 30 * 60 * 1000,       // 默认 30 分钟
+      continueOnError: false,
+      maxRetries: 1,
+      ...options  // 允许覆盖
+    };
+
     this.socket.emit('execute-workflow', {
       id: `exec-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      payload: { workflow },
+      payload: { 
+        workflow,
+        options: executionOptions
+      },
     });
   }
 

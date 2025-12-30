@@ -7,7 +7,6 @@
 import { E2BSandboxClient } from '../E2BSandboxClient';
 import type { CommandResult, CodeExecutionResult } from '../BaseSandboxClient';
 import { loadEnvFile } from '@monkey-agent/utils';
-import * as path from 'path';
 
 /**
  * 测试环境配置
